@@ -1,0 +1,10 @@
+services:
+  bff-mobile:
+    container_name: bff_mobile_dev
+    build:
+      context: ./src
+      dockerfile: Dockerfile
+    env_file:
+      - ./src/.env
+    ports:
+      - "7010:7010"
