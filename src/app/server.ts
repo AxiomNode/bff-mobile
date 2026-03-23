@@ -5,6 +5,7 @@ import Fastify from "fastify";
 
 import { loadConfig } from "./config.js";
 import { healthRoutes } from "./routes/health.js";
+import { mobileRoutes } from "./routes/mobile.js";
 
 async function buildServer() {
   const config = loadConfig();
@@ -14,6 +15,7 @@ async function buildServer() {
   await app.register(cors, { origin: allowedOrigins });
 
   await healthRoutes(app);
+  await mobileRoutes(app, config);
 
   return { app, config };
 }
