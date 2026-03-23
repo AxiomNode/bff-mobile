@@ -1,0 +1,36 @@
+FROM node:20-bookworm-slim AS deps
+WORKDIR /workspace
+
+COPY contracts-and-schemas /workspace/contracts-and-schemas
+COPY shared-sdk-client/typescript /workspace/shared-sdk-client/typescript
+
+WORKDIR /workspace/shared-sdk-client/typescript
+RUN npm install && npm run build
+
+WORKDIR /workspace/bff-mobile
+COPY bff-mobile/src/package.json bff-mobile/src/package-lock.json* ./
+RUN npm install && \
+	rm -rf node_modules/@axiomnode/shared-sdk-client && \
+	mkdir -p node_modules/@axiomnode && \
+	cp -R /workspace/shared-sdk-client/typescript node_modules/@axiomnode/shared-sdk-client
+
+FROM node:20-bookworm-slim AS build
+WORKDIR /workspace/bff-mobile
+COPY --from=deps /workspace/shared-sdk-client/typescript /workspace/shared-sdk-client/typescript
+COPY --from=deps /workspace/bff-mobile/node_modules ./node_modules
+COPY bff-mobile/src/package.json ./package.json
+COPY bff-mobile/src/package-lock.json ./package-lock.json
+COPY bff-mobile/src/app ./app
+COPY bff-mobile/src/tsconfig.json ./tsconfig.json
+COPY bff-mobile/src/.env.example ./.env.example
+RUN npm run build
+
+FROM node:20-bookworm-slim AS runtime
+WORKDIR /app
+ENV NODE_ENV=production
+COPY --from=deps /workspace/shared-sdk-client/typescript /workspace/shared-sdk-client/typescript
+COPY --from=build /workspace/bff-mobile/node_modules ./node_modules
+COPY --from=build /workspace/bff-mobile/dist ./dist
+COPY --from=build /workspace/bff-mobile/.env.example ./.env.example
+EXPOSE 7010
+CMD ["node", "dist/app/server.js"]
