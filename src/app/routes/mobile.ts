@@ -1,8 +1,17 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
-import { GenerateGameRequestSchema, RandomGameQuerySchema } from "@axiomnode/shared-sdk-client/contracts";
+import { RandomGameQuerySchema } from "@axiomnode/shared-sdk-client/contracts";
 import { buildUrl, forwardHttp } from "@axiomnode/shared-sdk-client/proxy";
+import { z } from "zod";
 
 import type { AppConfig } from "../config.js";
+
+const ManualGenerateGameRequestSchema = z.object({
+  language: z.string().default("es"),
+  categoryId: z.string().min(1),
+  difficultyPercentage: z.coerce.number().int().min(0).max(100).optional(),
+  numQuestions: z.coerce.number().int().positive().max(50).optional(),
+  letters: z.string().optional(),
+});
 
 async function forwardRequest(
   request: FastifyRequest,
@@ -37,13 +46,13 @@ export async function mobileRoutes(app: FastifyInstance, config: AppConfig): Pro
   });
 
   app.post("/v1/mobile/games/quiz/generate", async (request, reply) => {
-    const payload = GenerateGameRequestSchema.parse(request.body);
+    const payload = ManualGenerateGameRequestSchema.parse(request.body);
     const url = buildUrl(config.QUIZZ_SERVICE_URL, "/games/generate", {});
     await forwardRequest(request, reply, url, "POST", payload);
   });
 
   app.post("/v1/mobile/games/wordpass/generate", async (request, reply) => {
-    const payload = GenerateGameRequestSchema.parse(request.body);
+    const payload = ManualGenerateGameRequestSchema.parse(request.body);
     const url = buildUrl(config.WORDPASS_SERVICE_URL, "/games/generate", {});
     await forwardRequest(request, reply, url, "POST", payload);
   });
