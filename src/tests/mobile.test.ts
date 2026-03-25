@@ -70,7 +70,8 @@ describe("mobile routes", () => {
       },
       payload: {
         language: "es",
-        categoryId: 9,
+        categoryId: "9",
+        difficultyPercentage: 60,
       },
     });
 
@@ -79,7 +80,7 @@ describe("mobile routes", () => {
       "http://microservice-quizz:7100/games/generate",
       expect.objectContaining({
         method: "POST",
-        body: JSON.stringify({ language: "es", categoryId: 9 }),
+        body: JSON.stringify({ language: "es", categoryId: "9", difficultyPercentage: 60 }),
         headers: expect.objectContaining({
           authorization: "Bearer user-token",
           "x-correlation-id": "corr-mobile-post",
