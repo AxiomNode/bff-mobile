@@ -5,6 +5,7 @@ const envSchema = z.object({
     ALLOWED_ORIGINS: z.string().min(1),
     QUIZZ_SERVICE_URL: z.string().url(),
     WORDPASS_SERVICE_URL: z.string().url(),
+    UPSTREAM_TIMEOUT_MS: z.coerce.number().int().min(1000).max(120000).default(15000),
     METRICS_LOG_BUFFER_SIZE: z.coerce.number().int().min(50).max(5000).default(1000),
 });
 export function loadConfig() {
