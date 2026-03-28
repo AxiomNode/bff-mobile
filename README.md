@@ -8,6 +8,10 @@ Backend for Frontend para la aplicacion mobile de AxiomNode.
 - Orquestar llamadas hacia microservicios internos mediante api-gateway.
 - Reducir complejidad y latencia percibida en clientes mobile.
 
+## Responsabilidad principal
+
+- Fachada optimizada para clientes moviles con payloads compactos, baja latencia y resiliencia.
+
 ## Estructura
 
 - `src/`: servicio Fastify + TypeScript.
