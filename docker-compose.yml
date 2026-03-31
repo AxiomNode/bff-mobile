@@ -1,6 +1,7 @@
 services:
   bff-mobile:
     container_name: bff_mobile_dev
+    restart: unless-stopped
     build:
       context: ./src
       dockerfile: Dockerfile
@@ -9,3 +10,12 @@ services:
       - ./src/.env.secrets
     ports:
       - "7010:7010"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:7010/health || exit 1"]
+      interval: 15s
+      timeout: 5s
+      start_period: 10s
+      retries: 3
+    mem_limit: 256m
+    mem_reservation: 128m
+    cpus: "0.5"

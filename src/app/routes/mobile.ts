@@ -5,6 +5,8 @@ import { z } from "zod";
 
 import type { AppConfig } from "../config.js";
 
+/** @module mobile — Routes for mobile game endpoints (quiz & wordpass random and generate). */
+
 const ManualGenerateGameRequestSchema = z.object({
   language: z.string().default("es"),
   categoryId: z.string().min(1),
@@ -34,8 +36,10 @@ async function forwardRequest(
   reply.send(result.payload);
 }
 
+/** Registers mobile game routes for quiz and wordpass random retrieval and generation. */
 export async function mobileRoutes(app: FastifyInstance, config: AppConfig): Promise<void> {
   const upstreamTimeoutMs = config.UPSTREAM_TIMEOUT_MS ?? 15000;
+  const upstreamGenerationTimeoutMs = config.UPSTREAM_GENERATION_TIMEOUT_MS ?? 60000;
 
   app.get("/v1/mobile/games/quiz/random", async (request, reply) => {
     const query = RandomGameQuerySchema.parse(request.query);
@@ -52,12 +56,12 @@ export async function mobileRoutes(app: FastifyInstance, config: AppConfig): Pro
   app.post("/v1/mobile/games/quiz/generate", async (request, reply) => {
     const payload = ManualGenerateGameRequestSchema.parse(request.body);
     const url = buildUrl(config.QUIZZ_SERVICE_URL, "/games/generate", {});
-    await forwardRequest(request, reply, url, "POST", upstreamTimeoutMs, payload);
+    await forwardRequest(request, reply, url, "POST", upstreamGenerationTimeoutMs, payload);
   });
 
   app.post("/v1/mobile/games/wordpass/generate", async (request, reply) => {
     const payload = ManualGenerateGameRequestSchema.parse(request.body);
     const url = buildUrl(config.WORDPASS_SERVICE_URL, "/games/generate", {});
-    await forwardRequest(request, reply, url, "POST", upstreamTimeoutMs, payload);
+    await forwardRequest(request, reply, url, "POST", upstreamGenerationTimeoutMs, payload);
   });
 }
