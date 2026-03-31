@@ -1,28 +1,28 @@
 # bff-mobile
 
-Backend for Frontend para la aplicacion mobile de AxiomNode.
+Backend for Frontend for the AxiomNode mobile application.
 
-## Objetivo
+## Purpose
 
-- Adaptar contratos de backend a necesidades de mobile.
-- Orquestar llamadas hacia microservicios internos mediante api-gateway.
-- Reducir complejidad y latencia percibida en clientes mobile.
+- Adapt backend contracts to mobile needs.
+- Orchestrate calls to internal microservices via api-gateway.
+- Reduce complexity and perceived latency on mobile clients.
 
-## Responsabilidad principal
+## Main responsibility
 
-- Fachada optimizada para clientes moviles con payloads compactos, baja latencia y resiliencia.
+- Optimized facade for mobile clients with compact payloads, low latency, and resilience.
 
-## Estructura
+## Structure
 
-- `src/`: servicio Fastify + TypeScript.
-- `docs/`: arquitectura, guias y operacion.
-- `.github/workflows/ci.yml`: pipeline base.
+- `src/`: Fastify + TypeScript service.
+- `docs/`: architecture, guides, and operations.
+- `.github/workflows/ci.yml`: base pipeline.
 
-## Inicio rapido
+## Quick start
 
 1. `cd src`
 2. `cp .env.example .env`
-3. Desde el repositorio privado `secrets`, ejecutar `node scripts/prepare-runtime-secrets.mjs dev` para generar `src/.env.secrets`
+3. From the private `secrets` repository, run `node scripts/prepare-runtime-secrets.mjs dev` to generate `src/.env.secrets`
 4. `npm install`
 5. `npm run dev`
 
@@ -34,7 +34,7 @@ Backend for Frontend para la aplicacion mobile de AxiomNode.
 - `POST /v1/mobile/games/quiz/generate`
 - `POST /v1/mobile/games/wordpass/generate`
 
-## Dependencias internas
+## Internal dependencies
 
 - `QUIZZ_SERVICE_URL`
 - `WORDPASS_SERVICE_URL`
