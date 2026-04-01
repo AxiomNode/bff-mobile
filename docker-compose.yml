@@ -1,6 +1,7 @@
 services:
   bff-mobile:
-    container_name: bff_mobile_dev
+    image: "bff_mobile_${DISTRIBUTION:-dev}_${RELEASE_VERSION:-v1}"
+    container_name: "bff_mobile_${DISTRIBUTION:-dev}_${RELEASE_VERSION:-v1}"
     restart: unless-stopped
     build:
       context: ./src
