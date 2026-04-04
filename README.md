@@ -1,38 +1,48 @@
 # bff-mobile
 
-Backend for Frontend for the AxiomNode mobile application.
+Backend-for-Frontend service for AxiomNode mobile clients.
 
-## Purpose
+## Responsibilities
 
-- Adapt backend contracts to mobile needs.
-- Orchestrate calls to internal microservices via api-gateway.
-- Reduce complexity and perceived latency on mobile clients.
+- Expose mobile-oriented APIs with lightweight payloads.
+- Orchestrate quiz and word-pass game flows.
+- Isolate mobile clients from internal service topology changes.
 
-## Main responsibility
+## Repository structure
 
-- Optimized facade for mobile clients with compact payloads, low latency, and resilience.
+- `src/`: Fastify + TypeScript implementation.
+- `docs/`: architecture, guides, and operations docs.
+- `.github/workflows/ci.yml`: CI + deployment dispatch trigger.
 
-## Structure
-
-- `src/`: Fastify + TypeScript service.
-- `docs/`: architecture, guides, and operations.
-- `.github/workflows/ci.yml`: base pipeline.
-
-## Quick start
+## Local development
 
 1. `cd src`
 2. `cp .env.example .env`
-3. From the private `secrets` repository, run `node scripts/prepare-runtime-secrets.mjs dev` to generate `src/.env.secrets`
+3. From `secrets`, run `node scripts/prepare-runtime-secrets.mjs dev`
 4. `npm install`
 5. `npm run dev`
 
-## Endpoints
+## Main routes
 
 - `GET /health`
 - `GET /v1/mobile/games/quiz/random`
 - `GET /v1/mobile/games/wordpass/random`
 - `POST /v1/mobile/games/quiz/generate`
 - `POST /v1/mobile/games/wordpass/generate`
+
+## CI/CD workflow behavior
+
+- `ci.yml`
+	- Trigger: push (`main`, `develop`), pull request, manual dispatch.
+	- Job `build-test-lint`: install, build, test, and lint.
+	- Job `trigger-platform-infra-build`:
+		- Runs on push to `main`.
+		- Dispatches `platform-infra/.github/workflows/build-push.yaml` with `service=bff-mobile`.
+		- Requires `PLATFORM_INFRA_DISPATCH_TOKEN` in this repo.
+
+## Deployment automation chain
+
+Push to `main` triggers image rebuild in `platform-infra`, then automatic Kubernetes deployment to `dev`.
 
 ## Internal dependencies
 
