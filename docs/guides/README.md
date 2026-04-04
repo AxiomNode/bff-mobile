@@ -1,3 +1,3 @@
 # Guides
 
-Guia de integracion de clientes mobile y versionado de endpoints.
+Guide for mobile-client integration and endpoint versioning.

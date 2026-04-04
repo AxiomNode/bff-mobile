@@ -1,5 +1,5 @@
 # Architecture
 
-- Endpoint facade para clientes mobile.
-- Composicion de respuestas enfocada en UX mobile.
-- Integracion principal con api-gateway y servicios internos.
+- Endpoint facade for mobile clients.
+- Response composition focused on mobile UX requirements.
+- Primary integration with `api-gateway` and internal game services.
