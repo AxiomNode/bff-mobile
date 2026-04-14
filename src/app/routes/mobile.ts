@@ -1,5 +1,6 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { RandomGameQuerySchema } from "@axiomnode/shared-sdk-client/contracts";
+import { BaseGenerateSchema } from "@axiomnode/shared-sdk-client";
 import { buildUrl, forwardHttp } from "@axiomnode/shared-sdk-client/proxy";
 import { z } from "zod";
 
@@ -7,13 +8,16 @@ import type { AppConfig } from "../config.js";
 
 /** @module mobile — Routes for mobile game endpoints (quiz & wordpass random and generate). */
 
-const ManualGenerateGameRequestSchema = z.object({
-  language: z.string().default("es"),
-  categoryId: z.string().min(1),
-  difficultyPercentage: z.coerce.number().int().min(0).max(100).optional(),
-  numQuestions: z.coerce.number().int().positive().max(50).optional(),
+const WordPassGenerateRequestSchema = BaseGenerateSchema.extend({
   letters: z.string().optional(),
 });
+
+function sendValidationError(reply: FastifyReply, error: { flatten: () => unknown }): FastifyReply {
+  return reply.status(400).send({
+    message: "Invalid payload",
+    errors: error.flatten(),
+  });
+}
 
 async function forwardRequest(
   request: FastifyRequest,
@@ -42,26 +46,48 @@ export async function mobileRoutes(app: FastifyInstance, config: AppConfig): Pro
   const upstreamGenerationTimeoutMs = config.UPSTREAM_GENERATION_TIMEOUT_MS ?? 60000;
 
   app.get("/v1/mobile/games/quiz/random", async (request, reply) => {
-    const query = RandomGameQuerySchema.parse(request.query);
-    const url = buildUrl(config.QUIZZ_SERVICE_URL, "/games/models/random", query);
+    const parsedQuery = RandomGameQuerySchema.safeParse(request.query ?? {});
+    if (!parsedQuery.success) {
+      return reply.status(400).send({
+        message: "Invalid query parameters",
+        errors: parsedQuery.error.flatten(),
+      });
+    }
+
+    const url = buildUrl(config.QUIZZ_SERVICE_URL, "/games/models/random", parsedQuery.data);
     await forwardRequest(request, reply, url, "GET", upstreamTimeoutMs, undefined);
   });
 
   app.get("/v1/mobile/games/wordpass/random", async (request, reply) => {
-    const query = RandomGameQuerySchema.parse(request.query);
-    const url = buildUrl(config.WORDPASS_SERVICE_URL, "/games/models/random", query);
+    const parsedQuery = RandomGameQuerySchema.safeParse(request.query ?? {});
+    if (!parsedQuery.success) {
+      return reply.status(400).send({
+        message: "Invalid query parameters",
+        errors: parsedQuery.error.flatten(),
+      });
+    }
+
+    const url = buildUrl(config.WORDPASS_SERVICE_URL, "/games/models/random", parsedQuery.data);
     await forwardRequest(request, reply, url, "GET", upstreamTimeoutMs, undefined);
   });
 
   app.post("/v1/mobile/games/quiz/generate", async (request, reply) => {
-    const payload = ManualGenerateGameRequestSchema.parse(request.body);
+    const parsedPayload = BaseGenerateSchema.safeParse(request.body ?? {});
+    if (!parsedPayload.success) {
+      return sendValidationError(reply, parsedPayload.error);
+    }
+
     const url = buildUrl(config.QUIZZ_SERVICE_URL, "/games/generate", {});
-    await forwardRequest(request, reply, url, "POST", upstreamGenerationTimeoutMs, payload);
+    await forwardRequest(request, reply, url, "POST", upstreamGenerationTimeoutMs, parsedPayload.data);
   });
 
   app.post("/v1/mobile/games/wordpass/generate", async (request, reply) => {
-    const payload = ManualGenerateGameRequestSchema.parse(request.body);
+    const parsedPayload = WordPassGenerateRequestSchema.safeParse(request.body ?? {});
+    if (!parsedPayload.success) {
+      return sendValidationError(reply, parsedPayload.error);
+    }
+
     const url = buildUrl(config.WORDPASS_SERVICE_URL, "/games/generate", {});
-    await forwardRequest(request, reply, url, "POST", upstreamGenerationTimeoutMs, payload);
+    await forwardRequest(request, reply, url, "POST", upstreamGenerationTimeoutMs, parsedPayload.data);
   });
 }
