@@ -1,5 +1,7 @@
 # bff-mobile
 
+[![codecov](https://codecov.io/gh/AxiomNode/bff-mobile/branch/main/graph/badge.svg)](https://codecov.io/gh/AxiomNode/bff-mobile)
+
 Backend-for-Frontend service for AxiomNode mobile clients.
 
 ## Architectural role

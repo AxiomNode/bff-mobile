@@ -61,6 +61,13 @@ jobs:
         working-directory: bff-mobile/src
       - run: npm run test:coverage
         working-directory: bff-mobile/src
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v5
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: bff-mobile/src/coverage/lcov.info
+          flags: bff-mobile
+          fail_ci_if_error: false
       - run: npm run lint
         working-directory: bff-mobile/src
       - run: npm audit --omit=dev --audit-level=high
