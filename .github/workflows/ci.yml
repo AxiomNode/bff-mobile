@@ -59,7 +59,7 @@ jobs:
         working-directory: bff-mobile/src
       - run: npm run build
         working-directory: bff-mobile/src
-      - run: npm test
+      - run: npm run test:coverage
         working-directory: bff-mobile/src
       - run: npm run lint
         working-directory: bff-mobile/src
