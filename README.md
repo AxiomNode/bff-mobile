@@ -23,6 +23,14 @@ flowchart LR
 - Orchestrate quiz and word-pass game flows.
 - Isolate mobile clients from internal service topology changes.
 
+## Concrete orchestration scope
+
+`bff-mobile` is intentionally thin:
+
+- it does not own business persistence
+- it does not hold shared runtime routing state
+- it translates mobile-facing requests into explicit downstream calls with mobile-shaped responses
+
 ## Primary use cases
 
 - serve random playable quiz and word-pass content
@@ -52,6 +60,18 @@ flowchart LR
 - `POST /v1/mobile/games/quiz/generate`
 - `POST /v1/mobile/games/wordpass/generate`
 
+## Dependency model
+
+Primary downstream dependencies:
+
+- `microservice-quizz`
+- `microservice-wordpass`
+
+Indirect runtime dependencies reached through those services:
+
+- `ai-engine-api`
+- `ai-engine-stats`
+
 ## CI/CD workflow behavior
 
 - `ci.yml`
@@ -73,11 +93,25 @@ Push to `main` triggers image rebuild in `platform-infra`, then automatic Kubern
 - `QUIZZ_SERVICE_URL`
 - `WORDPASS_SERVICE_URL`
 
+## State and persistence
+
+`bff-mobile` is expected to remain stateless:
+
+- no repository-owned database
+- no repository-owned routing override storage
+- no shared operator state
+
 ## Operational notes
 
 - This service is part of the covered automatic staging deployment chain.
 - Validation failure prevents image publication for the triggering push.
 - Docs-only pushes should not trigger central image publication anymore.
+
+## Failure boundaries
+
+- domain service unavailable or slow
+- malformed downstream response that cannot be shaped into the mobile contract
+- generation latency inherited from quiz/word-pass services
 
 ## Related documents
 

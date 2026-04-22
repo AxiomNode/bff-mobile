@@ -46,6 +46,7 @@ export async function mobileRoutes(app: FastifyInstance, config: AppConfig): Pro
   const upstreamGenerationTimeoutMs = config.UPSTREAM_GENERATION_TIMEOUT_MS ?? 60000;
 
   app.get("/v1/mobile/games/quiz/random", async (request, reply) => {
+    /* v8 ignore next -- Fastify always materializes request.query for matched routes; the nullish fallback is defensive only */
     const parsedQuery = RandomGameQuerySchema.safeParse(request.query ?? {});
     if (!parsedQuery.success) {
       return reply.status(400).send({
@@ -59,6 +60,7 @@ export async function mobileRoutes(app: FastifyInstance, config: AppConfig): Pro
   });
 
   app.get("/v1/mobile/games/wordpass/random", async (request, reply) => {
+    /* v8 ignore next -- Fastify always materializes request.query for matched routes; the nullish fallback is defensive only */
     const parsedQuery = RandomGameQuerySchema.safeParse(request.query ?? {});
     if (!parsedQuery.success) {
       return reply.status(400).send({
