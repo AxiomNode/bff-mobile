@@ -57,6 +57,7 @@ flowchart LR
 ## Main routes
 
 - `GET /health`
+- `GET /v1/mobile/games/categories`
 - `GET /v1/mobile/games/quiz/random`
 - `GET /v1/mobile/games/wordpass/random`
 - `POST /v1/mobile/games/quiz/generate`

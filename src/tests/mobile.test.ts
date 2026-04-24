@@ -4,6 +4,172 @@ import Fastify from "fastify";
 import { mobileRoutes } from "../app/routes/mobile.js";
 
 describe("mobile routes", () => {
+  it("returns merged categories and languages from quiz and wordpass catalogs", async () => {
+    const app = Fastify();
+
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            source: "ai-engine",
+            categories: [
+              { id: "ciencia", name: "Ciencia" },
+              { id: "historia", name: "Historia" },
+            ],
+            languages: [
+              { code: "es", name: "Español" },
+              { code: "en", name: "English" },
+            ],
+          }),
+          {
+            status: 200,
+            headers: { "content-type": "application/json" },
+          },
+        ),
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            source: "ai-engine",
+            categories: [
+              { id: "historia", name: "Historia" },
+              { id: "deportes", name: "Deportes" },
+            ],
+            languages: [
+              { code: "es", name: "Español" },
+              { code: "fr", name: "Français" },
+            ],
+          }),
+          {
+            status: 200,
+            headers: { "content-type": "application/json" },
+          },
+        ),
+      );
+
+    vi.stubGlobal("fetch", fetchMock);
+
+    await mobileRoutes(app, {
+      SERVICE_NAME: "bff-mobile",
+      SERVICE_PORT: 7010,
+      ALLOWED_ORIGINS: "http://localhost:3000",
+      QUIZZ_SERVICE_URL: "http://microservice-quizz:7100",
+      WORDPASS_SERVICE_URL: "http://microservice-wordpass:7101",
+    });
+
+    const response = await app.inject({
+      method: "GET",
+      url: "/v1/mobile/games/categories",
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toEqual({
+      categories: [
+        { id: "ciencia", name: "Ciencia" },
+        { id: "historia", name: "Historia" },
+        { id: "deportes", name: "Deportes" },
+      ],
+      languages: [
+        { code: "es", name: "Español" },
+        { code: "en", name: "English" },
+        { code: "fr", name: "Français" },
+      ],
+    });
+    expect(fetchMock).toHaveBeenCalledWith(
+      "http://microservice-quizz:7100/catalogs",
+      expect.objectContaining({ method: "GET" }),
+    );
+    expect(fetchMock).toHaveBeenCalledWith(
+      "http://microservice-wordpass:7101/catalogs",
+      expect.objectContaining({ method: "GET" }),
+    );
+
+    vi.unstubAllGlobals();
+    await app.close();
+  });
+
+  it("returns catalog from available service when the other one fails", async () => {
+    const app = Fastify();
+
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        new Response("upstream down", {
+          status: 503,
+          headers: { "content-type": "text/plain" },
+        }),
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            categories: [{ id: "deportes", name: "Deportes" }],
+            languages: [{ code: "es", name: "Español" }],
+          }),
+          {
+            status: 200,
+            headers: { "content-type": "application/json" },
+          },
+        ),
+      );
+
+    vi.stubGlobal("fetch", fetchMock);
+
+    await mobileRoutes(app, {
+      SERVICE_NAME: "bff-mobile",
+      SERVICE_PORT: 7010,
+      ALLOWED_ORIGINS: "http://localhost:3000",
+      QUIZZ_SERVICE_URL: "http://microservice-quizz:7100",
+      WORDPASS_SERVICE_URL: "http://microservice-wordpass:7101",
+    });
+
+    const response = await app.inject({
+      method: "GET",
+      url: "/v1/mobile/games/categories",
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toEqual({
+      categories: [{ id: "deportes", name: "Deportes" }],
+      languages: [{ code: "es", name: "Español" }],
+    });
+
+    vi.unstubAllGlobals();
+    await app.close();
+  });
+
+  it("returns 502 when both upstream catalogs fail", async () => {
+    const app = Fastify();
+
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(new Response("quiz down", { status: 502 }))
+      .mockResolvedValueOnce(new Response("wordpass down", { status: 500 }));
+
+    vi.stubGlobal("fetch", fetchMock);
+
+    await mobileRoutes(app, {
+      SERVICE_NAME: "bff-mobile",
+      SERVICE_PORT: 7010,
+      ALLOWED_ORIGINS: "http://localhost:3000",
+      QUIZZ_SERVICE_URL: "http://microservice-quizz:7100",
+      WORDPASS_SERVICE_URL: "http://microservice-wordpass:7101",
+    });
+
+    const response = await app.inject({
+      method: "GET",
+      url: "/v1/mobile/games/categories",
+    });
+
+    expect(response.statusCode).toBe(502);
+    expect(response.json()).toMatchObject({
+      message: "Failed to load game catalogs from upstream services",
+    });
+
+    vi.unstubAllGlobals();
+    await app.close();
+  });
+
   it("forwards quiz random to microservice-quizz", async () => {
     const app = Fastify();
 
