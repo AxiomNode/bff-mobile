@@ -127,10 +127,6 @@ async function fetchCatalog(
   }
 }
 
-function resolveItemCount(payload: z.infer<typeof BaseGenerateSchema>): number {
-  return payload.itemCount ?? payload.numQuestions ?? 10;
-}
-
 async function buildGeneratedGameFromInventory(
   request: FastifyRequest,
   reply: FastifyReply,
@@ -142,8 +138,6 @@ async function buildGeneratedGameFromInventory(
   const randomUrl = buildUrl(serviceBaseUrl, "/games/models/random", {
     language: payload.language,
     categoryId: payload.categoryId,
-    difficultyPercentage: payload.difficultyPercentage,
-    count: resolveItemCount(payload),
   });
 
   const result = await forwardHttp({
