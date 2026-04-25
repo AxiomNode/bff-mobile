@@ -456,7 +456,7 @@ describe("mobile routes", () => {
     expect(response.statusCode).toBe(200);
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(fetchMock.mock.calls[0]?.[0]).toBe(
-      "http://microservice-quizz:7100/games/models/random?language=es&categoryId=9&difficultyPercentage=60&count=10",
+      "http://microservice-quizz:7100/games/models/random?language=es&categoryId=9",
     );
     expect(fetchMock.mock.calls[0]?.[1]).toEqual(
       expect.objectContaining({
@@ -629,7 +629,7 @@ describe("mobile routes", () => {
     expect(response.statusCode).toBe(200);
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(fetchMock.mock.calls[0]?.[0]).toBe(
-      "http://microservice-wordpass:7101/games/models/random?language=es&categoryId=9&count=10",
+      "http://microservice-wordpass:7101/games/models/random?language=es&categoryId=9",
     );
     expect(fetchMock.mock.calls[0]?.[1]).toEqual(
       expect.objectContaining({
@@ -708,7 +708,7 @@ describe("mobile routes", () => {
 
     expect(response.statusCode).toBe(200);
     expect(fetchMock).toHaveBeenCalledWith(
-      "http://microservice-quizz:7100/games/models/random?language=es&categoryId=9&count=10",
+      "http://microservice-quizz:7100/games/models/random?language=es&categoryId=9",
       expect.objectContaining({
         method: "GET",
         headers: expect.objectContaining({
