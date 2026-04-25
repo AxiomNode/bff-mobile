@@ -382,6 +382,50 @@ describe("mobile routes", () => {
     await app.close();
   });
 
+  it("accepts count on quiz random and limits returned items", async () => {
+    const app = Fastify();
+
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({
+        gameType: "quiz",
+        requested: 5,
+        returned: 3,
+        items: [{ id: "m1" }, { id: "m2" }, { id: "m3" }],
+      }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      }),
+    );
+
+    vi.stubGlobal("fetch", fetchMock);
+
+    await mobileRoutes(app, {
+      SERVICE_NAME: "bff-mobile",
+      SERVICE_PORT: 7010,
+      ALLOWED_ORIGINS: "http://localhost:3000",
+      QUIZZ_SERVICE_URL: "http://microservice-quizz:7100",
+      WORDPASS_SERVICE_URL: "http://microservice-wordpass:7101",
+    });
+
+    const response = await app.inject({
+      method: "GET",
+      url: "/v1/mobile/games/quiz/random?count=2&language=es",
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(fetchMock).toHaveBeenCalledWith(
+      "http://microservice-quizz:7100/games/models/random?language=es",
+      expect.objectContaining({ method: "GET" }),
+    );
+
+    const payload = response.json();
+    expect(payload).toMatchObject({ requested: 2, returned: 2 });
+    expect(payload.items).toHaveLength(2);
+
+    vi.unstubAllGlobals();
+    await app.close();
+  });
+
   it("forwards wordpass random to microservice-wordpass", async () => {
     const app = Fastify();
 

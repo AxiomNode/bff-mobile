@@ -55,6 +55,18 @@ const RandomModelsEnvelopeSchema = z.object({
   items: z.array(z.record(z.unknown())).default([]),
 });
 
+const MobileRandomQuerySchema = z.object({
+  language: z.string().optional(),
+  categoryId: z.string().min(1).optional(),
+  count: z.coerce.number().int().positive().max(50).optional(),
+}).strict();
+
+const RandomItemsEnvelopeSchema = z.object({
+  items: z.array(z.unknown()),
+  requested: z.number().int().positive().optional(),
+  returned: z.number().int().min(0).optional(),
+}).passthrough();
+
 function sendValidationError(reply: FastifyReply, error: { flatten: () => unknown }): FastifyReply {
   return reply.status(400).send({
     message: "Invalid payload",
@@ -62,25 +74,57 @@ function sendValidationError(reply: FastifyReply, error: { flatten: () => unknow
   });
 }
 
-async function forwardRequest(
+function applyCountToRandomPayload(payload: unknown, count: number): unknown {
+  const parsedPayload = RandomItemsEnvelopeSchema.safeParse(payload);
+  if (!parsedPayload.success) {
+    return payload;
+  }
+
+  const items = parsedPayload.data.items.slice(0, count);
+  return {
+    ...parsedPayload.data,
+    items,
+    requested: count,
+    returned: items.length,
+  };
+}
+
+async function forwardRandomRequest(
   request: FastifyRequest,
   reply: FastifyReply,
-  targetUrl: string,
-  method: "GET" | "POST",
+  serviceBaseUrl: string,
+  query: z.infer<typeof MobileRandomQuerySchema>,
   timeoutMs: number,
-  body?: unknown,
 ): Promise<void> {
+  const upstreamQuery = RandomGameQuerySchema.parse({
+    language: query.language,
+    categoryId: query.categoryId,
+  });
+
+  const targetUrl = buildUrl(serviceBaseUrl, "/games/models/random", upstreamQuery);
   const result = await forwardHttp({
     targetUrl,
-    method,
+    method: "GET",
     requestHeaders: request.headers as Record<string, string | undefined>,
-    body,
     timeoutMs,
   });
 
   reply.code(result.status);
   reply.header("content-type", result.contentType);
-  reply.send(result.payload);
+
+  if (result.status < 200 || result.status >= 300 || query.count === undefined) {
+    reply.send(result.payload);
+    return;
+  }
+
+  try {
+    const payload = typeof result.payload === "string"
+      ? JSON.parse(result.payload)
+      : result.payload;
+    reply.send(applyCountToRandomPayload(payload, query.count));
+  } catch {
+    reply.send(result.payload);
+  }
 }
 
 function mergeCatalogs(primary: MobileCatalog | null, secondary: MobileCatalog | null): MobileCatalog | null {
@@ -246,7 +290,7 @@ export async function mobileRoutes(app: FastifyInstance, config: AppConfig): Pro
 
   app.get("/v1/mobile/games/quiz/random", async (request, reply) => {
     /* v8 ignore next -- Fastify always materializes request.query for matched routes; the nullish fallback is defensive only */
-    const parsedQuery = RandomGameQuerySchema.safeParse(request.query ?? {});
+    const parsedQuery = MobileRandomQuerySchema.safeParse(request.query ?? {});
     if (!parsedQuery.success) {
       return reply.status(400).send({
         message: "Invalid query parameters",
@@ -254,13 +298,18 @@ export async function mobileRoutes(app: FastifyInstance, config: AppConfig): Pro
       });
     }
 
-    const url = buildUrl(config.QUIZZ_SERVICE_URL, "/games/models/random", parsedQuery.data);
-    await forwardRequest(request, reply, url, "GET", upstreamTimeoutMs, undefined);
+    await forwardRandomRequest(
+      request,
+      reply,
+      config.QUIZZ_SERVICE_URL,
+      parsedQuery.data,
+      upstreamTimeoutMs,
+    );
   });
 
   app.get("/v1/mobile/games/wordpass/random", async (request, reply) => {
     /* v8 ignore next -- Fastify always materializes request.query for matched routes; the nullish fallback is defensive only */
-    const parsedQuery = RandomGameQuerySchema.safeParse(request.query ?? {});
+    const parsedQuery = MobileRandomQuerySchema.safeParse(request.query ?? {});
     if (!parsedQuery.success) {
       return reply.status(400).send({
         message: "Invalid query parameters",
@@ -268,8 +317,13 @@ export async function mobileRoutes(app: FastifyInstance, config: AppConfig): Pro
       });
     }
 
-    const url = buildUrl(config.WORDPASS_SERVICE_URL, "/games/models/random", parsedQuery.data);
-    await forwardRequest(request, reply, url, "GET", upstreamTimeoutMs, undefined);
+    await forwardRandomRequest(
+      request,
+      reply,
+      config.WORDPASS_SERVICE_URL,
+      parsedQuery.data,
+      upstreamTimeoutMs,
+    );
   });
 
   app.post("/v1/mobile/games/quiz/generate", async (request, reply) => {
