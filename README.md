@@ -98,6 +98,7 @@ Push to `main` triggers image rebuild in `platform-infra`, then automatic Kubern
 
 - `QUIZZ_SERVICE_URL`
 - `WORDPASS_SERVICE_URL`
+- `USERS_SERVICE_URL`
 
 ## State and persistence
 

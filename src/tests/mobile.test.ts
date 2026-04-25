@@ -3,12 +3,6 @@ import { describe, expect, it, vi } from "vitest";
 import Fastify from "fastify";
 import { mobileRoutes } from "../app/routes/mobile.js";
 
-function createUnsignedJwt(payload: Record<string, unknown>): string {
-  const header = Buffer.from(JSON.stringify({ alg: "none", typ: "JWT" })).toString("base64url");
-  const body = Buffer.from(JSON.stringify(payload)).toString("base64url");
-  return `${header}.${body}.`;
-}
-
 describe("mobile routes", () => {
   it("returns merged categories from quiz and wordpass catalogs", async () => {
     const app = Fastify();
@@ -84,12 +78,35 @@ describe("mobile routes", () => {
 
   it("upserts and retrieves player profile from mobile endpoint", async () => {
     const app = Fastify();
-    const token = createUnsignedJwt({
-      sub: "player-123",
-      email: "player@axiomnode.es",
-      name: "Player One",
-      picture: "https://cdn.example.com/player-one.png",
-    });
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({
+          profile: {
+            firebaseUid: "player-123",
+            email: "player@axiomnode.es",
+            displayName: "Player One",
+            photoUrl: "https://cdn.example.com/player-one.png",
+          },
+        }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        }),
+      )
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({
+          profile: {
+            firebaseUid: "player-123",
+            email: "player@axiomnode.es",
+            displayName: "Player One",
+            photoUrl: "https://cdn.example.com/player-one.png",
+          },
+        }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        }),
+      );
+    vi.stubGlobal("fetch", fetchMock);
 
     await mobileRoutes(app, {
       SERVICE_NAME: "bff-mobile",
@@ -103,7 +120,7 @@ describe("mobile routes", () => {
       method: "PUT",
       url: "/v1/mobile/player/profile",
       headers: {
-        authorization: `Bearer ${token}`,
+        authorization: "Bearer verified-user-token",
       },
       payload: {
         preferredLanguage: "es",
@@ -114,7 +131,7 @@ describe("mobile routes", () => {
       method: "GET",
       url: "/v1/mobile/player/profile",
       headers: {
-        authorization: `Bearer ${token}`,
+        authorization: "Bearer verified-user-token",
       },
     });
 
@@ -142,16 +159,44 @@ describe("mobile routes", () => {
       },
     });
 
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(fetchMock.mock.calls[0]?.[0]).toBe("http://localhost:7102/users/me/profile");
+
+    vi.unstubAllGlobals();
     await app.close();
   });
 
   it("syncs mobile game events and returns aggregated player stats", async () => {
     const app = Fastify();
-    const token = createUnsignedJwt({
-      sub: "player-222",
-      email: "player2@axiomnode.es",
-      name: "Player Two",
-    });
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({
+          profile: {
+            firebaseUid: "player-222",
+            email: "player2@axiomnode.es",
+            displayName: "Player Two",
+            photoUrl: null,
+          },
+        }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        }),
+      )
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({
+          profile: {
+            firebaseUid: "player-222",
+            email: "player2@axiomnode.es",
+            displayName: "Player Two",
+            photoUrl: null,
+          },
+        }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        }),
+      );
+    vi.stubGlobal("fetch", fetchMock);
 
     await mobileRoutes(app, {
       SERVICE_NAME: "bff-mobile",
@@ -165,7 +210,7 @@ describe("mobile routes", () => {
       method: "POST",
       url: "/v1/mobile/games/events",
       headers: {
-        authorization: `Bearer ${token}`,
+        authorization: "Bearer verified-user-token",
       },
       payload: {
         events: [
@@ -199,7 +244,7 @@ describe("mobile routes", () => {
       method: "GET",
       url: "/v1/mobile/player/profile",
       headers: {
-        authorization: `Bearer ${token}`,
+        authorization: "Bearer verified-user-token",
       },
     });
 
@@ -221,6 +266,8 @@ describe("mobile routes", () => {
         totalGames: 2,
       },
     });
+
+    vi.unstubAllGlobals();
 
     await app.close();
   });
@@ -249,6 +296,34 @@ describe("mobile routes", () => {
     expect(getResponse.statusCode).toBe(401);
     expect(syncResponse.statusCode).toBe(401);
 
+    await app.close();
+  });
+
+  it("rejects spoofed x-player-id headers without trusted auth context", async () => {
+    const app = Fastify();
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+
+    await mobileRoutes(app, {
+      SERVICE_NAME: "bff-mobile",
+      SERVICE_PORT: 7010,
+      ALLOWED_ORIGINS: "http://localhost:3000",
+      QUIZZ_SERVICE_URL: "http://microservice-quizz:7100",
+      WORDPASS_SERVICE_URL: "http://microservice-wordpass:7101",
+    });
+
+    const response = await app.inject({
+      method: "GET",
+      url: "/v1/mobile/player/profile",
+      headers: {
+        "x-player-id": "victim-user-id",
+      },
+    });
+
+    expect(response.statusCode).toBe(401);
+    expect(fetchMock).not.toHaveBeenCalled();
+
+    vi.unstubAllGlobals();
     await app.close();
   });
 
