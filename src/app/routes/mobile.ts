@@ -4,7 +4,7 @@ import { buildUrl, forwardHttp } from "@axiomnode/shared-sdk-client/proxy";
 import { z } from "zod";
 
 import type { AppConfig } from "../config.js";
-import { PlayerStore, resolvePlayerIdentity } from "../services/playerStore.js";
+import { PlayerStore, type PlayerIdentity } from "../services/playerStore.js";
 
 /** @module mobile — Routes for mobile game endpoints (quiz & wordpass random and generate). */
 
@@ -59,6 +59,15 @@ const RandomItemsEnvelopeSchema = z.object({
   requested: z.number().int().positive().optional(),
   returned: z.number().int().min(0).optional(),
 }).passthrough();
+
+const UsersMeProfileResponseSchema = z.object({
+  profile: z.object({
+    firebaseUid: z.string().min(1),
+    email: z.string().email().nullable().optional(),
+    displayName: z.string().nullable().optional(),
+    photoUrl: z.string().url().nullable().optional(),
+  }),
+});
 
 function sendValidationError(reply: FastifyReply, error: { flatten: () => unknown }): FastifyReply {
   return reply.status(400).send({
@@ -129,6 +138,73 @@ function mergeCatalogs(primary: MobileCatalog | null, secondary: MobileCatalog |
 
   return {
     categories,
+  };
+}
+
+function hasMobileAuthContext(headers: Record<string, unknown>): boolean {
+  return typeof headers.authorization === "string"
+    || typeof headers["x-firebase-id-token"] === "string"
+    || typeof headers["x-dev-firebase-uid"] === "string";
+}
+
+async function resolveAuthenticatedPlayerIdentity(
+  request: FastifyRequest,
+  reply: FastifyReply,
+  config: AppConfig,
+  timeoutMs: number,
+): Promise<PlayerIdentity | null> {
+  const requestHeaders = request.headers as Record<string, string | undefined>;
+  if (!hasMobileAuthContext(request.headers as Record<string, unknown>)) {
+    reply.status(401).send({ message: "Unauthorized" });
+    return null;
+  }
+
+  let result;
+  try {
+    result = await forwardHttp({
+      targetUrl: buildUrl(config.USERS_SERVICE_URL ?? "http://localhost:7102", "/users/me/profile", {}),
+      method: "GET",
+      requestHeaders,
+      timeoutMs,
+    });
+  } catch (error) {
+    reply.status(502).send({
+      message: "Failed to resolve player identity",
+      error: error instanceof Error ? error.message : "Unknown error",
+    });
+    return null;
+  }
+
+  if (result.status === 401 || result.status === 403) {
+    reply.status(401).send({ message: "Unauthorized" });
+    return null;
+  }
+
+  if (result.status < 200 || result.status >= 300) {
+    reply.status(502).send({
+      message: "Failed to resolve player identity",
+      error: typeof result.payload === "string" ? result.payload : "Upstream auth failed",
+    });
+    return null;
+  }
+
+  const payload = typeof result.payload === "string"
+    ? JSON.parse(result.payload)
+    : result.payload;
+  const parsed = UsersMeProfileResponseSchema.safeParse(payload);
+  if (!parsed.success) {
+    reply.status(502).send({
+      message: "Failed to resolve player identity",
+      error: "Invalid users profile response",
+    });
+    return null;
+  }
+
+  return {
+    playerId: parsed.data.profile.firebaseUid,
+    email: parsed.data.profile.email ?? undefined,
+    displayName: parsed.data.profile.displayName ?? undefined,
+    photoUrl: parsed.data.profile.photoUrl ?? undefined,
   };
 }
 
@@ -209,9 +285,9 @@ export async function mobileRoutes(app: FastifyInstance, config: AppConfig): Pro
   const playerStore = new PlayerStore(config.PLAYER_DB_FILE ?? ":memory:");
 
   app.get("/v1/mobile/player/profile", async (request, reply) => {
-    const identity = resolvePlayerIdentity(request.headers as Record<string, unknown>);
+    const identity = await resolveAuthenticatedPlayerIdentity(request, reply, config, upstreamTimeoutMs);
     if (!identity) {
-      return reply.status(401).send({ message: "Unauthorized" });
+      return;
     }
 
     const summary = await playerStore.getPlayerSummary(identity);
@@ -219,9 +295,9 @@ export async function mobileRoutes(app: FastifyInstance, config: AppConfig): Pro
   });
 
   app.put("/v1/mobile/player/profile", async (request, reply) => {
-    const identity = resolvePlayerIdentity(request.headers as Record<string, unknown>);
+    const identity = await resolveAuthenticatedPlayerIdentity(request, reply, config, upstreamTimeoutMs);
     if (!identity) {
-      return reply.status(401).send({ message: "Unauthorized" });
+      return;
     }
 
     const parsedPayload = PlayerProfileUpdateSchema.safeParse(request.body ?? {});
@@ -241,9 +317,9 @@ export async function mobileRoutes(app: FastifyInstance, config: AppConfig): Pro
   });
 
   app.post("/v1/mobile/games/events", async (request, reply) => {
-    const identity = resolvePlayerIdentity(request.headers as Record<string, unknown>);
+    const identity = await resolveAuthenticatedPlayerIdentity(request, reply, config, upstreamTimeoutMs);
     if (!identity) {
-      return reply.status(401).send({ message: "Unauthorized" });
+      return;
     }
 
     const parsedPayload = GameEventsSyncSchema.safeParse(request.body ?? {});
