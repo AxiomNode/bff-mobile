@@ -1,6 +1,5 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
-import { RandomGameQuerySchema } from "@axiomnode/shared-sdk-client/contracts";
-import { BaseGenerateSchema } from "@axiomnode/shared-sdk-client";
+import { BaseGenerateSchema, RandomGameQuerySchema } from "@axiomnode/shared-sdk-client";
 import { buildUrl, forwardHttp } from "@axiomnode/shared-sdk-client/proxy";
 import { z } from "zod";
 
@@ -17,12 +16,6 @@ const CatalogSnapshotSchema = z.object({
   categories: z.array(
     z.object({
       id: z.string().min(1),
-      name: z.string().min(1),
-    }),
-  ),
-  languages: z.array(
-    z.object({
-      code: z.string().min(1),
       name: z.string().min(1),
     }),
   ),
@@ -97,7 +90,6 @@ async function forwardRandomRequest(
   timeoutMs: number,
 ): Promise<void> {
   const upstreamQuery = RandomGameQuerySchema.parse({
-    language: query.language,
     categoryId: query.categoryId,
   });
 
@@ -135,12 +127,8 @@ function mergeCatalogs(primary: MobileCatalog | null, secondary: MobileCatalog |
   const categories = [...(primary?.categories ?? []), ...(secondary?.categories ?? [])]
     .filter((item, index, arr) => arr.findIndex((candidate) => candidate.id === item.id) === index);
 
-  const languages = [...(primary?.languages ?? []), ...(secondary?.languages ?? [])]
-    .filter((item, index, arr) => arr.findIndex((candidate) => candidate.code === item.code) === index);
-
   return {
     categories,
-    languages,
   };
 }
 
@@ -180,7 +168,6 @@ async function buildGeneratedGameFromInventory(
   timeoutMs: number,
 ): Promise<FastifyReply> {
   const randomUrl = buildUrl(serviceBaseUrl, "/games/models/random", {
-    language: payload.language,
     categoryId: payload.categoryId,
   });
 
