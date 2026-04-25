@@ -3,6 +3,12 @@ import { describe, expect, it, vi } from "vitest";
 import Fastify from "fastify";
 import { mobileRoutes } from "../app/routes/mobile.js";
 
+function createUnsignedJwt(payload: Record<string, unknown>): string {
+  const header = Buffer.from(JSON.stringify({ alg: "none", typ: "JWT" })).toString("base64url");
+  const body = Buffer.from(JSON.stringify(payload)).toString("base64url");
+  return `${header}.${body}.`;
+}
+
 describe("mobile routes", () => {
   it("returns merged categories and languages from quiz and wordpass catalogs", async () => {
     const app = Fastify();
@@ -86,6 +92,176 @@ describe("mobile routes", () => {
     );
 
     vi.unstubAllGlobals();
+    await app.close();
+  });
+
+  it("upserts and retrieves player profile from mobile endpoint", async () => {
+    const app = Fastify();
+    const token = createUnsignedJwt({
+      sub: "player-123",
+      email: "player@axiomnode.es",
+      name: "Player One",
+      picture: "https://cdn.example.com/player-one.png",
+    });
+
+    await mobileRoutes(app, {
+      SERVICE_NAME: "bff-mobile",
+      SERVICE_PORT: 7010,
+      ALLOWED_ORIGINS: "http://localhost:3000",
+      QUIZZ_SERVICE_URL: "http://microservice-quizz:7100",
+      WORDPASS_SERVICE_URL: "http://microservice-wordpass:7101",
+    });
+
+    const upsertResponse = await app.inject({
+      method: "PUT",
+      url: "/v1/mobile/player/profile",
+      headers: {
+        authorization: `Bearer ${token}`,
+      },
+      payload: {
+        preferredLanguage: "es",
+      },
+    });
+
+    const getResponse = await app.inject({
+      method: "GET",
+      url: "/v1/mobile/player/profile",
+      headers: {
+        authorization: `Bearer ${token}`,
+      },
+    });
+
+    expect(upsertResponse.statusCode).toBe(200);
+    expect(upsertResponse.json()).toMatchObject({
+      profile: {
+        playerId: "player-123",
+        email: "player@axiomnode.es",
+        displayName: "Player One",
+        photoUrl: "https://cdn.example.com/player-one.png",
+        preferredLanguage: "es",
+      },
+      stats: {
+        totalGames: 0,
+      },
+    });
+    expect(getResponse.statusCode).toBe(200);
+    expect(getResponse.json()).toMatchObject({
+      profile: {
+        playerId: "player-123",
+        email: "player@axiomnode.es",
+      },
+      stats: {
+        totalGames: 0,
+      },
+    });
+
+    await app.close();
+  });
+
+  it("syncs mobile game events and returns aggregated player stats", async () => {
+    const app = Fastify();
+    const token = createUnsignedJwt({
+      sub: "player-222",
+      email: "player2@axiomnode.es",
+      name: "Player Two",
+    });
+
+    await mobileRoutes(app, {
+      SERVICE_NAME: "bff-mobile",
+      SERVICE_PORT: 7010,
+      ALLOWED_ORIGINS: "http://localhost:3000",
+      QUIZZ_SERVICE_URL: "http://microservice-quizz:7100",
+      WORDPASS_SERVICE_URL: "http://microservice-wordpass:7101",
+    });
+
+    const syncResponse = await app.inject({
+      method: "POST",
+      url: "/v1/mobile/games/events",
+      headers: {
+        authorization: `Bearer ${token}`,
+      },
+      payload: {
+        events: [
+          {
+            gameId: "game-1",
+            gameType: "quiz",
+            categoryId: "ciencia",
+            categoryName: "Ciencia",
+            language: "es",
+            outcome: "WON",
+            score: 90,
+            durationSeconds: 120,
+            timestamp: 1_710_000_000_000,
+          },
+          {
+            gameId: "game-2",
+            gameType: "wordpass",
+            categoryId: "historia",
+            categoryName: "Historia",
+            language: "es",
+            outcome: "LOST",
+            score: 30,
+            durationSeconds: 75,
+            timestamp: 1_710_000_050_000,
+          },
+        ],
+      },
+    });
+
+    const summaryResponse = await app.inject({
+      method: "GET",
+      url: "/v1/mobile/player/profile",
+      headers: {
+        authorization: `Bearer ${token}`,
+      },
+    });
+
+    expect(syncResponse.statusCode).toBe(200);
+    expect(syncResponse.json()).toMatchObject({
+      synced: 2,
+      stats: {
+        totalGames: 2,
+        wins: 1,
+        losses: 1,
+        draws: 0,
+        averageScore: 60,
+        totalPlayTimeSeconds: 195,
+      },
+    });
+    expect(summaryResponse.statusCode).toBe(200);
+    expect(summaryResponse.json()).toMatchObject({
+      stats: {
+        totalGames: 2,
+      },
+    });
+
+    await app.close();
+  });
+
+  it("rejects profile and game-event routes without a player identity", async () => {
+    const app = Fastify();
+
+    await mobileRoutes(app, {
+      SERVICE_NAME: "bff-mobile",
+      SERVICE_PORT: 7010,
+      ALLOWED_ORIGINS: "http://localhost:3000",
+      QUIZZ_SERVICE_URL: "http://microservice-quizz:7100",
+      WORDPASS_SERVICE_URL: "http://microservice-wordpass:7101",
+    });
+
+    const getResponse = await app.inject({
+      method: "GET",
+      url: "/v1/mobile/player/profile",
+    });
+    const syncResponse = await app.inject({
+      method: "POST",
+      url: "/v1/mobile/games/events",
+      payload: { events: [] },
+    });
+
+    expect(getResponse.statusCode).toBe(401);
+    expect(syncResponse.statusCode).toBe(401);
+
     await app.close();
   });
 
@@ -243,11 +419,11 @@ describe("mobile routes", () => {
     await app.close();
   });
 
-  it("forwards quiz generation POST with auth headers", async () => {
+  it("builds quiz generation from microservice model inventory with auth headers", async () => {
     const app = Fastify();
 
     const fetchMock = vi.fn().mockResolvedValue(
-      new Response(JSON.stringify({ generated: true }), {
+      new Response(JSON.stringify({ items: [{ id: "quiz-model-1" }] }), {
         status: 200,
         headers: { "content-type": "application/json" },
       }),
@@ -279,21 +455,18 @@ describe("mobile routes", () => {
 
     expect(response.statusCode).toBe(200);
     expect(fetchMock).toHaveBeenCalledTimes(1);
-    expect(fetchMock.mock.calls[0]?.[0]).toBe("http://microservice-quizz:7100/games/generate");
+    expect(fetchMock.mock.calls[0]?.[0]).toBe(
+      "http://microservice-quizz:7100/games/models/random?language=es&categoryId=9&difficultyPercentage=60&count=10",
+    );
     expect(fetchMock.mock.calls[0]?.[1]).toEqual(
       expect.objectContaining({
-        method: "POST",
+        method: "GET",
         headers: expect.objectContaining({
           authorization: "Bearer user-token",
           "x-correlation-id": "corr-mobile-post",
         }),
       }),
     );
-    expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body))).toEqual({
-      categoryId: "9",
-      language: "es",
-      difficultyPercentage: 60,
-    });
 
     vi.unstubAllGlobals();
     await app.close();
@@ -422,11 +595,11 @@ describe("mobile routes", () => {
     await app.close();
   });
 
-  it("forwards requestedBy and letters to wordpass generation", async () => {
+  it("builds wordpass generation from microservice model inventory", async () => {
     const app = Fastify();
 
     const fetchMock = vi.fn().mockResolvedValue(
-      new Response(JSON.stringify({ generated: true }), {
+      new Response(JSON.stringify({ items: [{ id: "wordpass-model-1" }] }), {
         status: 200,
         headers: { "content-type": "application/json" },
       }),
@@ -455,18 +628,14 @@ describe("mobile routes", () => {
 
     expect(response.statusCode).toBe(200);
     expect(fetchMock).toHaveBeenCalledTimes(1);
-    expect(fetchMock.mock.calls[0]?.[0]).toBe("http://microservice-wordpass:7101/games/generate");
+    expect(fetchMock.mock.calls[0]?.[0]).toBe(
+      "http://microservice-wordpass:7101/games/models/random?language=es&categoryId=9&count=10",
+    );
     expect(fetchMock.mock.calls[0]?.[1]).toEqual(
       expect.objectContaining({
-        method: "POST",
+        method: "GET",
       }),
     );
-    expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body))).toEqual({
-      categoryId: "9",
-      language: "es",
-      requestedBy: "api",
-      letters: "abc",
-    });
 
     vi.unstubAllGlobals();
     await app.close();
@@ -502,11 +671,11 @@ describe("mobile routes", () => {
     await app.close();
   });
 
-  it("forwards critical headers to quiz generation upstream", async () => {
+  it("forwards critical headers when building quiz generation from inventory", async () => {
     const app = Fastify();
 
     const fetchMock = vi.fn().mockResolvedValue(
-      new Response(JSON.stringify({ generated: true }), {
+      new Response(JSON.stringify({ items: [{ id: "quiz-model-2" }] }), {
         status: 200,
         headers: { "content-type": "application/json" },
       }),
@@ -539,9 +708,9 @@ describe("mobile routes", () => {
 
     expect(response.statusCode).toBe(200);
     expect(fetchMock).toHaveBeenCalledWith(
-      "http://microservice-quizz:7100/games/generate",
+      "http://microservice-quizz:7100/games/models/random?language=es&categoryId=9&count=10",
       expect.objectContaining({
-        method: "POST",
+        method: "GET",
         headers: expect.objectContaining({
           authorization: "Bearer user-token",
           "x-correlation-id": "corr-mobile-critical",

@@ -57,6 +57,9 @@ flowchart LR
 ## Main routes
 
 - `GET /health`
+- `GET /v1/mobile/player/profile`
+- `PUT /v1/mobile/player/profile`
+- `POST /v1/mobile/games/events`
 - `GET /v1/mobile/games/categories`
 - `GET /v1/mobile/games/quiz/random`
 - `GET /v1/mobile/games/wordpass/random`
@@ -98,11 +101,11 @@ Push to `main` triggers image rebuild in `platform-infra`, then automatic Kubern
 
 ## State and persistence
 
-`bff-mobile` is expected to remain stateless:
+`bff-mobile` keeps a lightweight embedded player database for mobile profile and event sync:
 
-- no repository-owned database
-- no repository-owned routing override storage
-- no shared operator state
+- `PLAYER_DB_FILE` controls the JSON persistence file (default `./data/player-db.json`)
+- stores per-player profile metadata and synced game events
+- used only for mobile player profile and stats snapshot APIs
 
 ## Operational notes
 

@@ -5,6 +5,7 @@ import { buildUrl, forwardHttp } from "@axiomnode/shared-sdk-client/proxy";
 import { z } from "zod";
 
 import type { AppConfig } from "../config.js";
+import { PlayerStore, resolvePlayerIdentity } from "../services/playerStore.js";
 
 /** @module mobile — Routes for mobile game endpoints (quiz & wordpass random and generate). */
 
@@ -27,7 +28,32 @@ const CatalogSnapshotSchema = z.object({
   ),
 });
 
+const PlayerProfileUpdateSchema = z.object({
+  email: z.string().email().optional(),
+  displayName: z.string().trim().min(1).max(120).optional(),
+  photoUrl: z.string().url().optional(),
+  preferredLanguage: z.string().trim().min(2).max(10).optional(),
+});
+
+const GameEventsSyncSchema = z.object({
+  events: z.array(z.object({
+    gameId: z.string().min(1),
+    gameType: z.string().min(1),
+    categoryId: z.string().min(1),
+    categoryName: z.string().min(1),
+    language: z.string().min(1),
+    outcome: z.string().min(1),
+    score: z.number().int().min(0).max(1_000_000),
+    durationSeconds: z.number().int().min(0).max(86_400),
+    timestamp: z.number().int().positive(),
+  })).min(1).max(500),
+});
+
 type MobileCatalog = z.infer<typeof CatalogSnapshotSchema>;
+
+const RandomModelsEnvelopeSchema = z.object({
+  items: z.array(z.record(z.unknown())).default([]),
+});
 
 function sendValidationError(reply: FastifyReply, error: { flatten: () => unknown }): FastifyReply {
   return reply.status(400).send({
@@ -101,10 +127,112 @@ async function fetchCatalog(
   }
 }
 
+function resolveItemCount(payload: z.infer<typeof BaseGenerateSchema>): number {
+  return payload.itemCount ?? payload.numQuestions ?? 10;
+}
+
+async function buildGeneratedGameFromInventory(
+  request: FastifyRequest,
+  reply: FastifyReply,
+  serviceBaseUrl: string,
+  gameType: "quiz" | "word-pass",
+  payload: z.infer<typeof BaseGenerateSchema>,
+  timeoutMs: number,
+): Promise<FastifyReply> {
+  const randomUrl = buildUrl(serviceBaseUrl, "/games/models/random", {
+    language: payload.language,
+    categoryId: payload.categoryId,
+    difficultyPercentage: payload.difficultyPercentage,
+    count: resolveItemCount(payload),
+  });
+
+  const result = await forwardHttp({
+    targetUrl: randomUrl,
+    method: "GET",
+    requestHeaders: request.headers as Record<string, string | undefined>,
+    timeoutMs,
+  });
+
+  if (result.status < 200 || result.status >= 300) {
+    return reply.code(result.status).send(result.payload);
+  }
+
+  const payloadJson = typeof result.payload === "string"
+    ? JSON.parse(result.payload)
+    : result.payload;
+
+  const parsed = RandomModelsEnvelopeSchema.safeParse(payloadJson);
+  const firstItem = parsed.success ? parsed.data.items[0] : undefined;
+
+  if (!firstItem || typeof firstItem !== "object") {
+    return reply.status(502).send({
+      message: "No game models available to build a playable game",
+      gameType,
+    });
+  }
+
+  return reply.send({
+    gameType,
+    generated: firstItem,
+  });
+}
+
 /** Registers mobile game routes for quiz and wordpass random retrieval and generation. */
 export async function mobileRoutes(app: FastifyInstance, config: AppConfig): Promise<void> {
   const upstreamTimeoutMs = config.UPSTREAM_TIMEOUT_MS ?? 15000;
   const upstreamGenerationTimeoutMs = config.UPSTREAM_GENERATION_TIMEOUT_MS ?? 60000;
+  const playerStore = new PlayerStore(config.PLAYER_DB_FILE ?? ":memory:");
+
+  app.get("/v1/mobile/player/profile", async (request, reply) => {
+    const identity = resolvePlayerIdentity(request.headers as Record<string, unknown>);
+    if (!identity) {
+      return reply.status(401).send({ message: "Unauthorized" });
+    }
+
+    const summary = await playerStore.getPlayerSummary(identity);
+    return reply.send(summary);
+  });
+
+  app.put("/v1/mobile/player/profile", async (request, reply) => {
+    const identity = resolvePlayerIdentity(request.headers as Record<string, unknown>);
+    if (!identity) {
+      return reply.status(401).send({ message: "Unauthorized" });
+    }
+
+    const parsedPayload = PlayerProfileUpdateSchema.safeParse(request.body ?? {});
+    if (!parsedPayload.success) {
+      return sendValidationError(reply, parsedPayload.error);
+    }
+
+    const profile = await playerStore.upsertPlayer(identity.playerId, {
+      email: parsedPayload.data.email ?? identity.email,
+      displayName: parsedPayload.data.displayName ?? identity.displayName,
+      photoUrl: parsedPayload.data.photoUrl ?? identity.photoUrl,
+      preferredLanguage: parsedPayload.data.preferredLanguage,
+    });
+
+    const stats = (await playerStore.getPlayerSummary(identity)).stats;
+    return reply.send({ profile, stats });
+  });
+
+  app.post("/v1/mobile/games/events", async (request, reply) => {
+    const identity = resolvePlayerIdentity(request.headers as Record<string, unknown>);
+    if (!identity) {
+      return reply.status(401).send({ message: "Unauthorized" });
+    }
+
+    const parsedPayload = GameEventsSyncSchema.safeParse(request.body ?? {});
+    if (!parsedPayload.success) {
+      return sendValidationError(reply, parsedPayload.error);
+    }
+
+    const result = await playerStore.saveGameEvents(identity.playerId, parsedPayload.data.events);
+    return reply.send({
+      synced: result.synced,
+      message: `Synced ${result.synced} game event(s)`,
+      stats: result.stats,
+    });
+  });
 
   app.get("/v1/mobile/games/categories", async (request, reply) => {
     const [quizCatalog, wordpassCatalog] = await Promise.all([
@@ -156,8 +284,14 @@ export async function mobileRoutes(app: FastifyInstance, config: AppConfig): Pro
       return sendValidationError(reply, parsedPayload.error);
     }
 
-    const url = buildUrl(config.QUIZZ_SERVICE_URL, "/games/generate", {});
-    await forwardRequest(request, reply, url, "POST", upstreamGenerationTimeoutMs, parsedPayload.data);
+    return buildGeneratedGameFromInventory(
+      request,
+      reply,
+      config.QUIZZ_SERVICE_URL,
+      "quiz",
+      parsedPayload.data,
+      upstreamGenerationTimeoutMs,
+    );
   });
 
   app.post("/v1/mobile/games/wordpass/generate", async (request, reply) => {
@@ -166,7 +300,13 @@ export async function mobileRoutes(app: FastifyInstance, config: AppConfig): Pro
       return sendValidationError(reply, parsedPayload.error);
     }
 
-    const url = buildUrl(config.WORDPASS_SERVICE_URL, "/games/generate", {});
-    await forwardRequest(request, reply, url, "POST", upstreamGenerationTimeoutMs, parsedPayload.data);
+    return buildGeneratedGameFromInventory(
+      request,
+      reply,
+      config.WORDPASS_SERVICE_URL,
+      "word-pass",
+      parsedPayload.data,
+      upstreamGenerationTimeoutMs,
+    );
   });
 }
