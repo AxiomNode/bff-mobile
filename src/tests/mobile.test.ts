@@ -10,7 +10,7 @@ function createUnsignedJwt(payload: Record<string, unknown>): string {
 }
 
 describe("mobile routes", () => {
-  it("returns merged categories and languages from quiz and wordpass catalogs", async () => {
+  it("returns merged categories from quiz and wordpass catalogs", async () => {
     const app = Fastify();
 
     const fetchMock = vi
@@ -22,10 +22,6 @@ describe("mobile routes", () => {
             categories: [
               { id: "ciencia", name: "Ciencia" },
               { id: "historia", name: "Historia" },
-            ],
-            languages: [
-              { code: "es", name: "Español" },
-              { code: "en", name: "English" },
             ],
           }),
           {
@@ -41,10 +37,6 @@ describe("mobile routes", () => {
             categories: [
               { id: "historia", name: "Historia" },
               { id: "deportes", name: "Deportes" },
-            ],
-            languages: [
-              { code: "es", name: "Español" },
-              { code: "fr", name: "Français" },
             ],
           }),
           {
@@ -75,11 +67,6 @@ describe("mobile routes", () => {
         { id: "ciencia", name: "Ciencia" },
         { id: "historia", name: "Historia" },
         { id: "deportes", name: "Deportes" },
-      ],
-      languages: [
-        { code: "es", name: "Español" },
-        { code: "en", name: "English" },
-        { code: "fr", name: "Français" },
       ],
     });
     expect(fetchMock).toHaveBeenCalledWith(
@@ -280,7 +267,6 @@ describe("mobile routes", () => {
         new Response(
           JSON.stringify({
             categories: [{ id: "deportes", name: "Deportes" }],
-            languages: [{ code: "es", name: "Español" }],
           }),
           {
             status: 200,
@@ -307,7 +293,6 @@ describe("mobile routes", () => {
     expect(response.statusCode).toBe(200);
     expect(response.json()).toEqual({
       categories: [{ id: "deportes", name: "Deportes" }],
-      languages: [{ code: "es", name: "Español" }],
     });
 
     vi.unstubAllGlobals();
@@ -374,7 +359,7 @@ describe("mobile routes", () => {
     expect(response.statusCode).toBe(200);
     expect(response.json()).toEqual({ source: "quiz" });
     expect(fetchMock).toHaveBeenCalledWith(
-      "http://microservice-quizz:7100/games/models/random?language=es&categoryId=42",
+      "http://microservice-quizz:7100/games/models/random?categoryId=42",
       expect.objectContaining({ method: "GET" }),
     );
 
@@ -414,7 +399,7 @@ describe("mobile routes", () => {
 
     expect(response.statusCode).toBe(200);
     expect(fetchMock).toHaveBeenCalledWith(
-      "http://microservice-quizz:7100/games/models/random?language=es",
+      "http://microservice-quizz:7100/games/models/random",
       expect.objectContaining({ method: "GET" }),
     );
 
@@ -455,7 +440,7 @@ describe("mobile routes", () => {
     expect(response.statusCode).toBe(200);
     expect(response.json()).toEqual({ source: "wordpass" });
     expect(fetchMock).toHaveBeenCalledWith(
-      "http://microservice-wordpass:7101/games/models/random?language=en",
+      "http://microservice-wordpass:7101/games/models/random",
       expect.objectContaining({ method: "GET" }),
     );
 
@@ -500,7 +485,7 @@ describe("mobile routes", () => {
     expect(response.statusCode).toBe(200);
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(fetchMock.mock.calls[0]?.[0]).toBe(
-      "http://microservice-quizz:7100/games/models/random?language=es&categoryId=9",
+      "http://microservice-quizz:7100/games/models/random?categoryId=9",
     );
     expect(fetchMock.mock.calls[0]?.[1]).toEqual(
       expect.objectContaining({
@@ -673,7 +658,7 @@ describe("mobile routes", () => {
     expect(response.statusCode).toBe(200);
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(fetchMock.mock.calls[0]?.[0]).toBe(
-      "http://microservice-wordpass:7101/games/models/random?language=es&categoryId=9",
+      "http://microservice-wordpass:7101/games/models/random?categoryId=9",
     );
     expect(fetchMock.mock.calls[0]?.[1]).toEqual(
       expect.objectContaining({
@@ -752,7 +737,7 @@ describe("mobile routes", () => {
 
     expect(response.statusCode).toBe(200);
     expect(fetchMock).toHaveBeenCalledWith(
-      "http://microservice-quizz:7100/games/models/random?language=es&categoryId=9",
+      "http://microservice-quizz:7100/games/models/random?categoryId=9",
       expect.objectContaining({
         method: "GET",
         headers: expect.objectContaining({
