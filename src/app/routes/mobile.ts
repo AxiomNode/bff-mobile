@@ -147,13 +147,32 @@ function hasMobileAuthContext(headers: Record<string, unknown>): boolean {
     || typeof headers["x-dev-firebase-uid"] === "string";
 }
 
+function buildUsersServiceAuthHeaders(
+  headers: Record<string, string | undefined>,
+): Record<string, string | undefined> {
+  const nextHeaders = { ...headers };
+  const firebaseIdToken = headers["x-firebase-id-token"];
+  const devFirebaseUid = headers["x-dev-firebase-uid"];
+
+  if (typeof devFirebaseUid === "string" && devFirebaseUid.trim().length > 0) {
+    delete nextHeaders.authorization;
+    return nextHeaders;
+  }
+
+  if (typeof firebaseIdToken === "string" && firebaseIdToken.trim().length > 0) {
+    nextHeaders.authorization = `Bearer ${firebaseIdToken}`;
+  }
+
+  return nextHeaders;
+}
+
 async function resolveAuthenticatedPlayerIdentity(
   request: FastifyRequest,
   reply: FastifyReply,
   config: AppConfig,
   timeoutMs: number,
 ): Promise<PlayerIdentity | null> {
-  const requestHeaders = request.headers as Record<string, string | undefined>;
+  const requestHeaders = buildUsersServiceAuthHeaders(request.headers as Record<string, string | undefined>);
   if (!hasMobileAuthContext(request.headers as Record<string, unknown>)) {
     reply.status(401).send({ message: "Unauthorized" });
     return null;

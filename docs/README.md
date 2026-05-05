@@ -1,5 +1,7 @@
 # bff-mobile docs
 
+Last updated: 2026-05-03.
+
 Technical documentation for the mobile BFF service.
 
 ## Purpose
@@ -10,7 +12,7 @@ This local docs folder explains the concrete implementation surface of `bff-mobi
 - downstream dependency model toward game services
 - local operational workflow for app-facing integration changes
 
-## Contents
+## Navigation
 
 - `architecture/README.md`: repository-local architecture boundary and dependency model.
 - `guides/README.md`: mobile integration and endpoint evolution guidance.
@@ -21,6 +23,11 @@ This local docs folder explains the concrete implementation surface of `bff-mobi
 1. Start with `architecture/README.md`.
 2. Continue with `guides/README.md` when changing mobile-facing behavior.
 3. Use `operations/README.md` for local run and troubleshooting.
+
+## When to use this
+
+- when the central platform docs are too broad for a mobile BFF change
+- when you need the repository-local navigation entry for architecture, guides, and operations
 
 ## CI/CD reference
 

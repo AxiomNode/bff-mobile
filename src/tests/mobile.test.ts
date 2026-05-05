@@ -327,6 +327,114 @@ describe("mobile routes", () => {
     await app.close();
   });
 
+  it("uses dev uid auth context for player profile without forwarding edge bearer", async () => {
+    const app = Fastify();
+
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({
+        profile: {
+          firebaseUid: "smoke-dev-firebase-uid",
+          email: "player@axiomnode.es",
+          displayName: "Dev Player",
+          photoUrl: null,
+        },
+      }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      }),
+    );
+
+    vi.stubGlobal("fetch", fetchMock);
+
+    await mobileRoutes(app, {
+      SERVICE_NAME: "bff-mobile",
+      SERVICE_PORT: 7010,
+      ALLOWED_ORIGINS: "http://localhost:3000",
+      QUIZZ_SERVICE_URL: "http://microservice-quizz:7100",
+      WORDPASS_SERVICE_URL: "http://microservice-wordpass:7101",
+    });
+
+    const response = await app.inject({
+      method: "GET",
+      url: "/v1/mobile/player/profile",
+      headers: {
+        authorization: "Bearer edge-secret",
+        "x-dev-firebase-uid": "smoke-dev-firebase-uid",
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(fetchMock).toHaveBeenCalledWith(
+      "http://localhost:7102/users/me/profile",
+      expect.objectContaining({
+        method: "GET",
+        headers: expect.objectContaining({
+          "x-dev-firebase-uid": "smoke-dev-firebase-uid",
+        }),
+      }),
+    );
+    expect(fetchMock.mock.calls[0]?.[1]).toEqual(expect.objectContaining({
+      headers: expect.not.objectContaining({
+        authorization: "Bearer edge-secret",
+      }),
+    }));
+
+    vi.unstubAllGlobals();
+    await app.close();
+  });
+
+  it("promotes firebase id token to bearer auth for player profile resolution", async () => {
+    const app = Fastify();
+
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({
+        profile: {
+          firebaseUid: "firebase-user-1",
+          email: "player@axiomnode.es",
+          displayName: "Firebase Player",
+          photoUrl: null,
+        },
+      }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      }),
+    );
+
+    vi.stubGlobal("fetch", fetchMock);
+
+    await mobileRoutes(app, {
+      SERVICE_NAME: "bff-mobile",
+      SERVICE_PORT: 7010,
+      ALLOWED_ORIGINS: "http://localhost:3000",
+      QUIZZ_SERVICE_URL: "http://microservice-quizz:7100",
+      WORDPASS_SERVICE_URL: "http://microservice-wordpass:7101",
+    });
+
+    const response = await app.inject({
+      method: "GET",
+      url: "/v1/mobile/player/profile",
+      headers: {
+        authorization: "Bearer edge-secret",
+        "x-firebase-id-token": "firebase-mobile-token",
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(fetchMock).toHaveBeenCalledWith(
+      "http://localhost:7102/users/me/profile",
+      expect.objectContaining({
+        method: "GET",
+        headers: expect.objectContaining({
+          authorization: "Bearer firebase-mobile-token",
+          "x-firebase-id-token": "firebase-mobile-token",
+        }),
+      }),
+    );
+
+    vi.unstubAllGlobals();
+    await app.close();
+  });
+
   it("returns catalog from available service when the other one fails", async () => {
     const app = Fastify();
 
