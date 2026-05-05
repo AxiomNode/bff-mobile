@@ -1,14 +1,18 @@
 # bff-mobile
 
+Last updated: 2026-05-03.
+
 [![codecov](https://codecov.io/gh/AxiomNode/bff-mobile/branch/main/graph/badge.svg)](https://codecov.io/gh/AxiomNode/bff-mobile)
 
 Backend-for-Frontend service for AxiomNode mobile clients.
 
-## Architectural role
+## Responsibility
 
 `bff-mobile` is the mobile channel facade. It provides mobile-shaped contracts while insulating the app from domain-service topology and internal contract churn.
 
-## Runtime context
+## Runtime role
+
+### Runtime context
 
 ```mermaid
 flowchart LR
@@ -19,13 +23,15 @@ flowchart LR
 	BFF --> Users[microservice-users]
 ```
 
-## Responsibilities
+### Main responsibilities
 
 - Expose mobile-oriented APIs with lightweight payloads.
 - Orchestrate quiz and word-pass game flows.
 - Isolate mobile clients from internal service topology changes.
 
-## Concrete orchestration scope
+## Runtime surface
+
+### Concrete orchestration scope
 
 `bff-mobile` is intentionally thin:
 
@@ -33,20 +39,24 @@ flowchart LR
 - it does not hold shared runtime routing state
 - it translates mobile-facing requests into explicit downstream calls with mobile-shaped responses
 
-## Primary use cases
+Cross-repo mobile orchestration, payload semantics, and player-sync behavior are documented in the mobile gameplay capability dossier so this README can stay at repository level.
+
+### Primary use cases
 
 - serve random playable quiz and word-pass content
 - trigger generation flows through downstream services
 - aggregate mobile-ready responses with minimal coupling to internal service boundaries
 - expose stable public mobile entry semantics behind the gateway layer
 
-## Repository structure
+## Local setup
+
+### Repository structure
 
 - `src/`: Fastify + TypeScript implementation.
 - `docs/`: architecture, guides, and operations docs.
 - `.github/workflows/ci.yml`: CI + deployment dispatch trigger.
 
-## Local development
+### Local development
 
 1. `cd src`
 2. `cp .env.example .env`
@@ -54,19 +64,13 @@ flowchart LR
 4. `npm install`
 5. `npm run dev`
 
-## Main routes
+### Route note
 
-- `GET /health`
-- `GET /v1/mobile/player/profile`
-- `PUT /v1/mobile/player/profile`
-- `POST /v1/mobile/games/events`
-- `GET /v1/mobile/games/categories`
-- `GET /v1/mobile/games/quiz/random`
-- `GET /v1/mobile/games/wordpass/random`
-- `POST /v1/mobile/games/quiz/generate`
-- `POST /v1/mobile/games/wordpass/generate`
+This service owns the mobile-facing profile, category, random gameplay, generation, and event-sync routes. Use `docs/architecture/README.md` and the mobile gameplay capability dossier for the concrete inventory.
 
-## Dependency model
+## Dependencies and contracts
+
+### Dependency model
 
 Primary downstream dependencies:
 
@@ -78,29 +82,19 @@ Indirect runtime dependencies reached through those services:
 - `ai-engine-api`
 - `ai-engine-stats`
 
-## CI/CD workflow behavior
+## Deployment and operations notes
 
-- `ci.yml`
-	- Trigger: push (`main`, `develop`), pull request, manual dispatch.
-	- Job `build-test-lint`: checks out `shared-sdk-client` with `CROSS_REPO_READ_TOKEN`, blocks tracked `src/node_modules` / `src/dist`, then runs install, build, test, lint, and production `npm audit --omit=dev --audit-level=high`.
-	- Job `trigger-platform-infra-build`:
-		- Runs on push to `main`.
-		- Waits for `build-test-lint` to succeed before evaluating dispatch.
-		- Skips `platform-infra` dispatch on docs-only or workflow-only changes.
-		- Dispatches `platform-infra/.github/workflows/build-push.yaml` with `service=bff-mobile`.
-		- Requires `PLATFORM_INFRA_DISPATCH_TOKEN` in this repo.
+### CI/CD and rollout note
 
-## Deployment automation chain
+CI, image publication, and staging rollout behavior are documented in `docs/operations/README.md` and `../docs/operations/cicd-workflow-map.md`.
 
-Push to `main` triggers image rebuild in `platform-infra`, then automatic Kubernetes deployment to `stg` when repository validation and central packaging succeed.
-
-## Internal dependencies
+### Internal dependencies
 
 - `QUIZZ_SERVICE_URL`
 - `WORDPASS_SERVICE_URL`
 - `USERS_SERVICE_URL`
 
-## State and persistence
+### State and persistence
 
 `bff-mobile` keeps a lightweight embedded player database for mobile profile and event sync:
 
@@ -108,20 +102,28 @@ Push to `main` triggers image rebuild in `platform-infra`, then automatic Kubern
 - stores per-player profile metadata and synced game events
 - used only for mobile player profile and stats snapshot APIs
 
-## Operational notes
+## Documentation
+
+- `docs/README.md`
+- `docs/architecture/README.md`
+- `docs/guides/README.md`
+- `docs/operations/README.md`
+
+### Operational notes
 
 - This service is part of the covered automatic staging deployment chain.
 - Validation failure prevents image publication for the triggering push.
 - Docs-only pushes should not trigger central image publication anymore.
 
-## Failure boundaries
+### Failure boundaries
 
 - domain service unavailable or slow
 - malformed downstream response that cannot be shaped into the mobile contract
 - generation latency inherited from quiz/word-pass services
 
-## Related documents
+## References
 
 - `docs/architecture/`
 - `docs/operations/`
+- `../docs/guides/capabilities/player/mobile-gameplay-orchestration.md`
 - `../docs/operations/cicd-workflow-map.md`
