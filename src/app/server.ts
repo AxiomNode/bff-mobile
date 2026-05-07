@@ -15,7 +15,7 @@ configureHttpAgent();
 
 /** @module server — Fastify-based BFF-Mobile server with CORS, metrics, and game routes. */
 
-async function buildServer() {
+export async function buildServer() {
   const config = loadConfig();
   const app = Fastify({ logger: true });
   const metrics = new ServiceMetrics(config);
@@ -70,6 +70,20 @@ async function buildServer() {
       responseBytes,
     });
 
+    metrics.recordLog(
+      reply.statusCode >= 500 ? "error" : reply.statusCode >= 400 ? "warn" : "info",
+      "request_completed",
+      {
+        correlation_id: correlationId,
+        method: request.method,
+        route,
+        status_code: reply.statusCode,
+        duration_ms: durationMs,
+        request_bytes: requestAny._requestBytes ?? 0,
+        response_bytes: responseBytes,
+      },
+    );
+
     app.log.info({
       correlation_id: correlationId,
       service: config.SERVICE_NAME,
@@ -108,7 +122,18 @@ async function main() {
   app.log.info({ service: config.SERVICE_NAME }, "BFF mobile started");
 }
 
-main().catch((error) => {
-  console.error(error);
-  process.exit(1);
-});
+const isDirectRun = (() => {
+  try {
+    const entryUrl = new URL(`file://${process.argv[1] ?? ""}`).href;
+    return import.meta.url === entryUrl;
+  } catch {
+    return false;
+  }
+})();
+
+if (isDirectRun) {
+  main().catch((error) => {
+    console.error(error);
+    process.exit(1);
+  });
+}
