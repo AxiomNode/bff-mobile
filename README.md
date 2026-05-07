@@ -1,6 +1,6 @@
 # bff-mobile
 
-Last updated: 2026-05-03.
+Last updated: 2026-05-08.
 
 [![codecov](https://codecov.io/gh/AxiomNode/bff-mobile/branch/main/graph/badge.svg)](https://codecov.io/gh/AxiomNode/bff-mobile)
 
@@ -9,6 +9,8 @@ Backend-for-Frontend service for AxiomNode mobile clients.
 ## Responsibility
 
 `bff-mobile` is the mobile channel facade. It provides mobile-shaped contracts while insulating the app from domain-service topology and internal contract churn.
+
+Current platform status: mobile traffic enters through `api-gateway`, then flows through this BFF into `microservice-users`, `microservice-quizz`, and `microservice-wordpass`. Runtime AI generation remains behind the domain services, not exposed directly to mobile clients.
 
 ## Runtime role
 
