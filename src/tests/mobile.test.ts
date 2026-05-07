@@ -1,7 +1,11 @@
 import { describe, expect, it, vi } from "vitest";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
 
 import Fastify from "fastify";
 import { mobileRoutes } from "../app/routes/mobile.js";
+import { PlayerStore } from "../app/services/playerStore.js";
 
 describe("mobile routes", () => {
   it("returns merged categories from quiz and wordpass catalogs", async () => {
@@ -292,10 +296,164 @@ describe("mobile routes", () => {
       url: "/v1/mobile/games/events",
       payload: { events: [] },
     });
+    const updateResponse = await app.inject({
+      method: "PUT",
+      url: "/v1/mobile/player/profile",
+      payload: { preferredLanguage: "es" },
+    });
 
     expect(getResponse.statusCode).toBe(401);
     expect(syncResponse.statusCode).toBe(401);
+    expect(updateResponse.statusCode).toBe(401);
 
+    await app.close();
+  });
+
+  it("surfaces player identity upstream failures", async () => {
+    const app = Fastify();
+
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(new Response("forbidden", { status: 403 }))
+      .mockResolvedValueOnce(new Response("users down", { status: 503 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ profile: { firebaseUid: "" } }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      }))
+      .mockRejectedValueOnce(new Error("network unavailable"));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await mobileRoutes(app, {
+      SERVICE_NAME: "bff-mobile",
+      SERVICE_PORT: 7010,
+      ALLOWED_ORIGINS: "http://localhost:3000",
+      QUIZZ_SERVICE_URL: "http://microservice-quizz:7100",
+      WORDPASS_SERVICE_URL: "http://microservice-wordpass:7101",
+      PLAYER_DB_FILE: ":memory:",
+    });
+
+    const unauthorized = await app.inject({
+      method: "GET",
+      url: "/v1/mobile/player/profile",
+      headers: { authorization: "Bearer denied" },
+    });
+    const upstreamError = await app.inject({
+      method: "GET",
+      url: "/v1/mobile/player/profile",
+      headers: { authorization: "Bearer upstream-error" },
+    });
+    const invalidProfile = await app.inject({
+      method: "GET",
+      url: "/v1/mobile/player/profile",
+      headers: { authorization: "Bearer invalid-profile" },
+    });
+    const networkError = await app.inject({
+      method: "GET",
+      url: "/v1/mobile/player/profile",
+      headers: { authorization: "Bearer network-error" },
+    });
+
+    expect(unauthorized.statusCode).toBe(401);
+    expect(upstreamError.statusCode).toBe(502);
+    expect(upstreamError.json()).toMatchObject({ error: "users down" });
+    expect(invalidProfile.statusCode).toBe(502);
+    expect(invalidProfile.json()).toMatchObject({ error: "Invalid users profile response" });
+    expect(networkError.statusCode).toBe(502);
+    expect(networkError.json()).toMatchObject({ error: "network unavailable" });
+
+    vi.unstubAllGlobals();
+    await app.close();
+  });
+
+  it("rejects blank firebase auth hints as invalid upstream profiles", async () => {
+    const app = Fastify();
+
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ profile: { firebaseUid: "" } }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    await mobileRoutes(app, {
+      SERVICE_NAME: "bff-mobile",
+      SERVICE_PORT: 7010,
+      ALLOWED_ORIGINS: "http://localhost:3000",
+      QUIZZ_SERVICE_URL: "http://microservice-quizz:7100",
+      WORDPASS_SERVICE_URL: "http://microservice-wordpass:7101",
+      PLAYER_DB_FILE: ":memory:",
+    });
+
+    const response = await app.inject({
+      method: "GET",
+      url: "/v1/mobile/player/profile",
+      headers: {
+        "x-dev-firebase-uid": "   ",
+        "x-firebase-id-token": "   ",
+      },
+    });
+
+    expect(response.statusCode).toBe(502);
+    expect(fetchMock.mock.calls[0]?.[1]).toEqual(
+      expect.objectContaining({
+        headers: expect.objectContaining({
+          "x-dev-firebase-uid": "   ",
+          "x-firebase-id-token": "   ",
+        }),
+      }),
+    );
+
+    vi.unstubAllGlobals();
+    await app.close();
+  });
+
+  it("rejects invalid authenticated profile and event payloads before persisting", async () => {
+    const app = Fastify();
+
+    const fetchMock = vi.fn().mockImplementation(() => Promise.resolve(
+      new Response(JSON.stringify({
+        profile: {
+          firebaseUid: "player-invalid-payload",
+          email: "player@axiomnode.es",
+          displayName: "Invalid Payload Player",
+          photoUrl: null,
+        },
+      }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      }),
+    ));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await mobileRoutes(app, {
+      SERVICE_NAME: "bff-mobile",
+      SERVICE_PORT: 7010,
+      ALLOWED_ORIGINS: "http://localhost:3000",
+      QUIZZ_SERVICE_URL: "http://microservice-quizz:7100",
+      WORDPASS_SERVICE_URL: "http://microservice-wordpass:7101",
+      PLAYER_DB_FILE: ":memory:",
+    });
+
+    const profileResponse = await app.inject({
+      method: "PUT",
+      url: "/v1/mobile/player/profile",
+      headers: { authorization: "Bearer verified-user-token" },
+      payload: { email: "not-an-email" },
+    });
+    const eventsResponse = await app.inject({
+      method: "POST",
+      url: "/v1/mobile/games/events",
+      headers: { authorization: "Bearer verified-user-token" },
+      payload: { events: [] },
+    });
+
+    expect(profileResponse.statusCode).toBe(400);
+    expect(profileResponse.json()).toMatchObject({ message: "Invalid payload" });
+    expect(eventsResponse.statusCode).toBe(400);
+    expect(eventsResponse.json()).toMatchObject({ message: "Invalid payload" });
+
+    vi.unstubAllGlobals();
     await app.close();
   });
 
@@ -477,6 +635,84 @@ describe("mobile routes", () => {
     expect(response.json()).toEqual({
       categories: [{ id: "deportes", name: "Deportes" }],
     });
+
+    vi.unstubAllGlobals();
+    await app.close();
+  });
+
+  it("parses catalog payloads returned as text when upstream content type is not json", async () => {
+    const app = Fastify();
+
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ categories: [{ id: "science", name: "Science" }] }), {
+        status: 200,
+        headers: { "content-type": "text/plain" },
+      }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ categories: [{ id: "history", name: "History" }] }), {
+        status: 200,
+        headers: { "content-type": "text/plain" },
+      }));
+
+    vi.stubGlobal("fetch", fetchMock);
+
+    await mobileRoutes(app, {
+      SERVICE_NAME: "bff-mobile",
+      SERVICE_PORT: 7010,
+      ALLOWED_ORIGINS: "http://localhost:3000",
+      QUIZZ_SERVICE_URL: "http://microservice-quizz:7100",
+      WORDPASS_SERVICE_URL: "http://microservice-wordpass:7101",
+    });
+
+    const response = await app.inject({ method: "GET", url: "/v1/mobile/games/categories" });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toEqual({
+      categories: [
+        { id: "science", name: "Science" },
+        { id: "history", name: "History" },
+      ],
+    });
+
+    vi.unstubAllGlobals();
+    await app.close();
+  });
+
+  it("ignores malformed catalog payloads while merging available categories", async () => {
+    const app = Fastify();
+
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ categories: [{ id: "", name: "Broken" }] }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        }),
+      )
+      .mockResolvedValueOnce(
+        new Response("not-json", {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        }),
+      );
+
+    vi.stubGlobal("fetch", fetchMock);
+
+    await mobileRoutes(app, {
+      SERVICE_NAME: "bff-mobile",
+      SERVICE_PORT: 7010,
+      ALLOWED_ORIGINS: "http://localhost:3000",
+      QUIZZ_SERVICE_URL: "http://microservice-quizz:7100",
+      WORDPASS_SERVICE_URL: "http://microservice-wordpass:7101",
+    });
+
+    const response = await app.inject({
+      method: "GET",
+      url: "/v1/mobile/games/categories",
+    });
+
+    expect(response.statusCode).toBe(502);
+    expect(response.json()).toMatchObject({ message: "Failed to load game catalogs from upstream services" });
 
     vi.unstubAllGlobals();
     await app.close();
@@ -679,6 +915,79 @@ describe("mobile routes", () => {
         }),
       }),
     );
+
+    vi.unstubAllGlobals();
+    await app.close();
+  });
+
+  it("forwards upstream generation inventory failures", async () => {
+    const app = Fastify();
+
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response("generation unavailable", {
+        status: 503,
+        headers: { "content-type": "text/plain" },
+      }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    await mobileRoutes(app, {
+      SERVICE_NAME: "bff-mobile",
+      SERVICE_PORT: 7010,
+      ALLOWED_ORIGINS: "http://localhost:3000",
+      QUIZZ_SERVICE_URL: "http://microservice-quizz:7100",
+      WORDPASS_SERVICE_URL: "http://microservice-wordpass:7101",
+    });
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/v1/mobile/games/quiz/generate",
+      payload: {
+        language: "es",
+        categoryId: "9",
+      },
+    });
+
+    expect(response.statusCode).toBe(503);
+    expect(response.body).toBe("generation unavailable");
+
+    vi.unstubAllGlobals();
+    await app.close();
+  });
+
+  it("parses generated inventory payloads returned as text", async () => {
+    const app = Fastify();
+
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ items: [{ id: "quiz-text-model" }] }), {
+        status: 200,
+        headers: { "content-type": "text/plain" },
+      }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    await mobileRoutes(app, {
+      SERVICE_NAME: "bff-mobile",
+      SERVICE_PORT: 7010,
+      ALLOWED_ORIGINS: "http://localhost:3000",
+      QUIZZ_SERVICE_URL: "http://microservice-quizz:7100",
+      WORDPASS_SERVICE_URL: "http://microservice-wordpass:7101",
+    });
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/v1/mobile/games/quiz/generate",
+      payload: {
+        language: "es",
+        categoryId: "9",
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toEqual({
+      gameType: "quiz",
+      generated: { id: "quiz-text-model" },
+    });
 
     vi.unstubAllGlobals();
     await app.close();
@@ -934,5 +1243,130 @@ describe("mobile routes", () => {
 
     vi.unstubAllGlobals();
     await app.close();
+  });
+
+  it("returns 502 when generated inventory has no usable first item", async () => {
+    const app = Fastify();
+
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ items: [] }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    await mobileRoutes(app, {
+      SERVICE_NAME: "bff-mobile",
+      SERVICE_PORT: 7010,
+      ALLOWED_ORIGINS: "http://localhost:3000",
+      QUIZZ_SERVICE_URL: "http://microservice-quizz:7100",
+      WORDPASS_SERVICE_URL: "http://microservice-wordpass:7101",
+    });
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/v1/mobile/games/quiz/generate",
+      payload: {
+        language: "es",
+        categoryId: "9",
+      },
+    });
+
+    expect(response.statusCode).toBe(502);
+    expect(response.json()).toMatchObject({
+      message: "No game models available to build a playable game",
+      gameType: "quiz",
+    });
+
+    vi.unstubAllGlobals();
+    await app.close();
+  });
+
+  it("persists player summaries and ignores duplicate game events", async () => {
+    const tempDir = await mkdtemp(path.join(os.tmpdir(), "axiomnode-player-store-"));
+    const dbFile = path.join(tempDir, "players.json");
+
+    try {
+      const store = new PlayerStore(dbFile);
+
+      await store.upsertPlayer("player-store-1", {
+        email: "player-store@axiomnode.es",
+        displayName: "Store Player",
+        photoUrl: "https://cdn.example.com/store-player.png",
+        preferredLanguage: "en",
+      });
+      await store.upsertPlayer("player-store-1", {});
+
+      const event = {
+        gameId: "game-duplicate",
+        gameType: "quiz",
+        categoryId: "science",
+        categoryName: "Science",
+        language: "en",
+        outcome: "DRAW",
+        score: 42,
+        durationSeconds: 30,
+        timestamp: 1_710_000_100_000,
+      };
+
+      const firstSync = await store.saveGameEvents("player-store-1", [event]);
+      const duplicateSync = await store.saveGameEvents("player-store-1", [event]);
+
+      expect(firstSync).toMatchObject({ synced: 1, stats: { totalGames: 1, draws: 1 } });
+      expect(duplicateSync).toMatchObject({ synced: 0, stats: { totalGames: 1, draws: 1 } });
+
+      const reloaded = new PlayerStore(dbFile);
+      await expect(reloaded.getPlayerSummary({ playerId: "player-store-1" })).resolves.toMatchObject({
+        profile: {
+          email: "player-store@axiomnode.es",
+          displayName: "Store Player",
+          photoUrl: "https://cdn.example.com/store-player.png",
+          preferredLanguage: "en",
+        },
+        stats: {
+          totalGames: 1,
+          draws: 1,
+          totalScore: 42,
+        },
+      });
+
+      const persisted = JSON.parse(await readFile(dbFile, "utf-8"));
+      expect(persisted.events).toHaveLength(1);
+    } finally {
+      await rm(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects malformed persisted player store files", async () => {
+    const tempDir = await mkdtemp(path.join(os.tmpdir(), "axiomnode-player-store-broken-"));
+    const dbFile = path.join(tempDir, "players.json");
+
+    try {
+      await writeFile(dbFile, "not-json", "utf-8");
+      const store = new PlayerStore(dbFile);
+
+      await expect(store.getPlayerSummary({ playerId: "broken-player" })).rejects.toBeInstanceOf(SyntaxError);
+    } finally {
+      await rm(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it("creates anonymous player summaries with null optional profile fields", async () => {
+    const store = new PlayerStore(":memory:");
+
+    await expect(store.getPlayerSummary({ playerId: "anonymous-player" })).resolves.toMatchObject({
+      profile: {
+        playerId: "anonymous-player",
+        email: null,
+        displayName: null,
+        photoUrl: null,
+        preferredLanguage: null,
+      },
+      stats: {
+        totalGames: 0,
+        lastPlayedAt: null,
+      },
+    });
   });
 });
