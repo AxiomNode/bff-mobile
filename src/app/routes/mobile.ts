@@ -45,7 +45,7 @@ const GameEventsSyncSchema = z.object({
 type MobileCatalog = z.infer<typeof CatalogSnapshotSchema>;
 
 const RandomModelsEnvelopeSchema = z.object({
-  items: z.array(z.record(z.unknown())).default([]),
+  items: z.array(z.record(z.string(), z.unknown())).default([]),
 });
 
 const MobileRandomQuerySchema = z.object({
