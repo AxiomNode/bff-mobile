@@ -5,6 +5,7 @@ import { z } from "zod";
 
 import type { AppConfig } from "../config.js";
 import { PlayerStore, type PlayerIdentity } from "../services/playerStore.js";
+import { createRateLimiter, DEFAULT_RATE_LIMIT_MAX, DEFAULT_RATE_LIMIT_WINDOW_MS } from "../plugins/rateLimit.js";
 
 /** @module mobile — Routes for mobile game endpoints (quiz & wordpass random and generate). */
 
@@ -302,8 +303,14 @@ export async function mobileRoutes(app: FastifyInstance, config: AppConfig): Pro
   const upstreamTimeoutMs = config.UPSTREAM_TIMEOUT_MS ?? 15000;
   const upstreamGenerationTimeoutMs = config.UPSTREAM_GENERATION_TIMEOUT_MS ?? 60000;
   const playerStore = new PlayerStore(config.PLAYER_DB_FILE ?? ":memory:");
+  const limited = {
+    onRequest: createRateLimiter({
+      max: config.RATE_LIMIT_MAX ?? DEFAULT_RATE_LIMIT_MAX,
+      windowMs: config.RATE_LIMIT_WINDOW_MS ?? DEFAULT_RATE_LIMIT_WINDOW_MS,
+    }),
+  };
 
-  app.get("/v1/mobile/player/profile", async (request, reply) => {
+  app.get("/v1/mobile/player/profile", limited, async (request, reply) => {
     const identity = await resolveAuthenticatedPlayerIdentity(request, reply, config, upstreamTimeoutMs);
     if (!identity) {
       return;
@@ -313,7 +320,7 @@ export async function mobileRoutes(app: FastifyInstance, config: AppConfig): Pro
     return reply.send(summary);
   });
 
-  app.put("/v1/mobile/player/profile", async (request, reply) => {
+  app.put("/v1/mobile/player/profile", limited, async (request, reply) => {
     const identity = await resolveAuthenticatedPlayerIdentity(request, reply, config, upstreamTimeoutMs);
     if (!identity) {
       return;
@@ -335,7 +342,7 @@ export async function mobileRoutes(app: FastifyInstance, config: AppConfig): Pro
     return reply.send({ profile, stats });
   });
 
-  app.post("/v1/mobile/games/events", async (request, reply) => {
+  app.post("/v1/mobile/games/events", limited, async (request, reply) => {
     const identity = await resolveAuthenticatedPlayerIdentity(request, reply, config, upstreamTimeoutMs);
     if (!identity) {
       return;
@@ -354,7 +361,7 @@ export async function mobileRoutes(app: FastifyInstance, config: AppConfig): Pro
     });
   });
 
-  app.get("/v1/mobile/games/categories", async (request, reply) => {
+  app.get("/v1/mobile/games/categories", limited, async (request, reply) => {
     const [quizCatalog, wordpassCatalog] = await Promise.all([
       fetchCatalog(request, buildUrl(config.QUIZZ_SERVICE_URL, "/catalogs", {}), upstreamTimeoutMs),
       fetchCatalog(request, buildUrl(config.WORDPASS_SERVICE_URL, "/catalogs", {}), upstreamTimeoutMs),
@@ -370,7 +377,7 @@ export async function mobileRoutes(app: FastifyInstance, config: AppConfig): Pro
     return reply.send(merged);
   });
 
-  app.get("/v1/mobile/games/quiz/random", async (request, reply) => {
+  app.get("/v1/mobile/games/quiz/random", limited, async (request, reply) => {
     /* v8 ignore next -- Fastify always materializes request.query for matched routes; the nullish fallback is defensive only */
     const parsedQuery = MobileRandomQuerySchema.safeParse(request.query ?? {});
     if (!parsedQuery.success) {
@@ -389,7 +396,7 @@ export async function mobileRoutes(app: FastifyInstance, config: AppConfig): Pro
     );
   });
 
-  app.get("/v1/mobile/games/wordpass/random", async (request, reply) => {
+  app.get("/v1/mobile/games/wordpass/random", limited, async (request, reply) => {
     /* v8 ignore next -- Fastify always materializes request.query for matched routes; the nullish fallback is defensive only */
     const parsedQuery = MobileRandomQuerySchema.safeParse(request.query ?? {});
     if (!parsedQuery.success) {
@@ -408,7 +415,7 @@ export async function mobileRoutes(app: FastifyInstance, config: AppConfig): Pro
     );
   });
 
-  app.post("/v1/mobile/games/quiz/generate", async (request, reply) => {
+  app.post("/v1/mobile/games/quiz/generate", limited, async (request, reply) => {
     const parsedPayload = BaseGenerateSchema.safeParse(request.body ?? {});
     if (!parsedPayload.success) {
       return sendValidationError(reply, parsedPayload.error);
@@ -424,7 +431,7 @@ export async function mobileRoutes(app: FastifyInstance, config: AppConfig): Pro
     );
   });
 
-  app.post("/v1/mobile/games/wordpass/generate", async (request, reply) => {
+  app.post("/v1/mobile/games/wordpass/generate", limited, async (request, reply) => {
     const parsedPayload = WordPassGenerateRequestSchema.safeParse(request.body ?? {});
     if (!parsedPayload.success) {
       return sendValidationError(reply, parsedPayload.error);

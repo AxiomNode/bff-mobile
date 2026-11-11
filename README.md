@@ -66,6 +66,10 @@ Cross-repo mobile orchestration, payload semantics, and player-sync behavior are
 4. `npm install`
 5. `npm run dev`
 
+### Client IP and rate limiting
+
+Set `TRUST_PROXY` (default `false`; `true`/`false`, a hop count such as `1`, or a comma-separated IP/CIDR list) so `request.ip` is the real client address behind the ingress. `/v1/mobile/*` routes are limited in memory per client IP by `RATE_LIMIT_MAX` (default `120`, `0` disables) and `RATE_LIMIT_WINDOW_MS` (default `60000`); see `docs/operations/README.md`.
+
 ### Route note
 
 This service owns the mobile-facing profile, category, random gameplay, generation, and event-sync routes. Use `docs/architecture/README.md` and the mobile gameplay capability dossier for the concrete inventory.

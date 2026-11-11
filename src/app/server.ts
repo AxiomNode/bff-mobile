@@ -6,6 +6,7 @@ import { randomUUID } from "node:crypto";
 import { isUpstreamTimeoutError, configureHttpAgent } from "@axiomnode/shared-sdk-client/proxy";
 
 import { loadConfig } from "./config.js";
+import { parseTrustProxy } from "./plugins/trustProxy.js";
 import { healthRoutes } from "./routes/health.js";
 import { mobileRoutes } from "./routes/mobile.js";
 import { monitoringRoutes } from "./routes/monitoring.js";
@@ -17,7 +18,7 @@ configureHttpAgent();
 
 export async function buildServer() {
   const config = loadConfig();
-  const app = Fastify({ logger: true });
+  const app = Fastify({ logger: true, trustProxy: parseTrustProxy(config.TRUST_PROXY) });
   const metrics = new ServiceMetrics(config);
 
   const allowedOrigins = config.ALLOWED_ORIGINS.split(",").map((v) => v.trim());
