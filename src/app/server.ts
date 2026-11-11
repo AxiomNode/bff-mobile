@@ -110,6 +110,12 @@ export async function buildServer() {
       return;
     }
 
+    // @fastify/rate-limit throws a plain object (not an Error) carrying `statusCode`; Fastify would send it as 200.
+    if (!(error instanceof Error) && typeof (error as { statusCode?: unknown }).statusCode === "number") {
+      reply.status((error as { statusCode: number }).statusCode).send(error);
+      return;
+    }
+
     reply.send(error);
   });
 
