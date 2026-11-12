@@ -102,11 +102,15 @@ CI and image publication are documented in `docs/operations/README.md` and `../d
 
 ### State and persistence
 
-`bff-mobile` keeps a lightweight embedded player database for mobile profile and event sync:
+`bff-mobile` is stateless. Player profile, game events and stats live in `microservice-users` (the system of record behind the leaderboard); the three player routes only forward to it:
 
-- `PLAYER_DB_FILE` controls the JSON persistence file (default `./data/player-db.json`)
-- stores per-player profile metadata and synced game events
-- used only for mobile player profile and stats snapshot APIs
+- `GET /v1/mobile/player/profile` reads `/users/me/profile` (plus `/users/me/stats?recentLimit=1` for `lastPlayedAt` when the player has history) and maps it to the same `{ profile, stats }` shape as before.
+- `PUT /v1/mobile/player/profile` calls `POST /users/firebase/session` (profile fields come from the verified token claims) and returns the refreshed summary. `preferredLanguage` is no longer stored and is always `null`.
+- `POST /v1/mobile/games/events` calls the idempotent `POST /users/me/games/events/batch` (deploy `microservice-users` first) and returns `{ synced, message, stats }`.
+
+#### Migrating the old JSON file
+
+The former `PLAYER_DB_FILE` (default `./data/player-db.json`) is no longer read and the variable is ignored. Nothing is migrated automatically. If the file holds data worth keeping, its `events` array can be replayed once per player through the batch endpoint above (each event already carries `gameId`, `gameType`, `categoryId`, `categoryName`, `language`, `outcome`, `score`, `durationSeconds`, `timestamp`; lower-case the `outcome`), using a token of that player. Replays are idempotent, so a partial run can simply be repeated.
 
 ## Documentation
 
