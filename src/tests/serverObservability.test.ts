@@ -17,7 +17,6 @@ beforeEach(async () => {
   vi.stubEnv("QUIZZ_SERVICE_URL", "http://microservice-quizz:7100");
   vi.stubEnv("WORDPASS_SERVICE_URL", "http://microservice-wordpass:7101");
   vi.stubEnv("USERS_SERVICE_URL", "http://microservice-users:7102");
-  vi.stubEnv("PLAYER_DB_FILE", ":memory:");
 });
 
 afterEach(async () => {

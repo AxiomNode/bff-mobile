@@ -4,7 +4,6 @@ import { buildUrl, forwardHttp } from "@axiomnode/shared-sdk-client/proxy";
 import { z } from "zod";
 
 import type { AppConfig } from "../config.js";
-import { PlayerStore, type PlayerIdentity } from "../services/playerStore.js";
 import rateLimit from "@fastify/rate-limit";
 import { DEFAULT_RATE_LIMIT_MAX, DEFAULT_RATE_LIMIT_WINDOW_MS, rateLimitOptions } from "../plugins/rateLimit.js";
 
@@ -37,7 +36,8 @@ const GameEventsSyncSchema = z.object({
     categoryId: z.string().min(1),
     categoryName: z.string().min(1),
     language: z.string().min(1),
-    outcome: z.string().min(1),
+    // The app sends WON/LOST/DRAW; microservice-users stores lower-case values.
+    outcome: z.string().transform((value) => value.trim().toLowerCase()).pipe(z.enum(["won", "lost", "draw"])),
     score: z.number().int().min(0).max(1_000_000),
     durationSeconds: z.number().int().min(0).max(86_400),
     timestamp: z.number().int().positive(),
@@ -65,11 +65,47 @@ const RandomItemsEnvelopeSchema = z.object({
 const UsersMeProfileResponseSchema = z.object({
   profile: z.object({
     firebaseUid: z.string().min(1),
-    email: z.string().email().nullable().optional(),
+    email: z.string().nullable().optional(),
     displayName: z.string().nullable().optional(),
-    photoUrl: z.string().url().nullable().optional(),
+    photoUrl: z.string().nullable().optional(),
+    gamesPlayed: z.number().default(0),
+    gamesWon: z.number().default(0),
+    gamesLost: z.number().default(0),
+    gamesDraw: z.number().default(0),
+    totalScore: z.number().default(0),
+    totalDurationSeconds: z.number().default(0),
+    createdAt: z.string().optional(),
+    updatedAt: z.string().optional(),
   }),
 });
+
+const UsersMeStatsResponseSchema = z.object({
+  recentEvents: z.array(z.object({ playedAt: z.string() })).default([]),
+});
+
+/** Player profile and stats returned to the app (same shape the JSON PlayerStore produced). */
+type PlayerSummary = {
+  profile: {
+    playerId: string;
+    email: string | null;
+    displayName: string | null;
+    photoUrl: string | null;
+    /** microservice-users has no preferred-language column yet, so this is always null. */
+    preferredLanguage: string | null;
+    createdAt: number;
+    updatedAt: number;
+  };
+  stats: {
+    totalGames: number;
+    wins: number;
+    losses: number;
+    draws: number;
+    averageScore: number;
+    totalScore: number;
+    totalPlayTimeSeconds: number;
+    lastPlayedAt: number | null;
+  };
+};
 
 function sendValidationError(reply: FastifyReply, error: { flatten: () => unknown }): FastifyReply {
   return reply.status(400).send({
@@ -168,65 +204,154 @@ function buildUsersServiceAuthHeaders(
   return nextHeaders;
 }
 
-async function resolveAuthenticatedPlayerIdentity(
+type UsersCallResult =
+  | { ok: true; payload: unknown }
+  | { ok: false };
+
+function safeJsonParse(value: string): unknown {
+  try {
+    return JSON.parse(value);
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Calls microservice-users on behalf of the player (the users service verifies the token itself).
+ * On failure it has already answered the request (401 for invalid credentials, the upstream status for other
+ * 4xx such as 400/403, 502 otherwise) and returns `ok: false`.
+ */
+async function callUsersService(
   request: FastifyRequest,
   reply: FastifyReply,
   config: AppConfig,
   timeoutMs: number,
-): Promise<PlayerIdentity | null> {
-  const requestHeaders = buildUsersServiceAuthHeaders(request.headers as Record<string, string | undefined>);
-  if (!hasMobileAuthContext(request.headers as Record<string, unknown>)) {
-    reply.status(401).send({ message: "Unauthorized" });
-    return null;
-  }
-
+  method: "GET" | "POST",
+  path: string,
+  query: Record<string, string | number | undefined> = {},
+  body?: unknown,
+): Promise<UsersCallResult> {
   let result;
   try {
     result = await forwardHttp({
-      targetUrl: buildUrl(config.USERS_SERVICE_URL ?? "http://localhost:7102", "/users/me/profile", {}),
-      method: "GET",
-      requestHeaders,
+      targetUrl: buildUrl(config.USERS_SERVICE_URL ?? "http://localhost:7102", path, query),
+      method,
+      requestHeaders: buildUsersServiceAuthHeaders(request.headers as Record<string, string | undefined>),
+      body,
       timeoutMs,
     });
   } catch (error) {
     reply.status(502).send({
-      message: "Failed to resolve player identity",
+      message: "Failed to reach users service",
       error: error instanceof Error ? error.message : "Unknown error",
     });
-    return null;
+    return { ok: false };
   }
 
-  if (result.status === 401 || result.status === 403) {
+  if (result.status === 401) {
     reply.status(401).send({ message: "Unauthorized" });
-    return null;
+    return { ok: false };
+  }
+
+  if (result.status >= 400 && result.status < 500) {
+    reply.code(result.status).send(result.payload);
+    return { ok: false };
   }
 
   if (result.status < 200 || result.status >= 300) {
     reply.status(502).send({
-      message: "Failed to resolve player identity",
-      error: typeof result.payload === "string" ? result.payload : "Upstream auth failed",
+      message: "Failed to load player data",
+      error: typeof result.payload === "string" ? result.payload : "Upstream users service failed",
     });
-    return null;
+    return { ok: false };
   }
 
-  const payload = typeof result.payload === "string"
-    ? JSON.parse(result.payload)
-    : result.payload;
-  const parsed = UsersMeProfileResponseSchema.safeParse(payload);
-  if (!parsed.success) {
-    reply.status(502).send({
-      message: "Failed to resolve player identity",
-      error: "Invalid users profile response",
-    });
-    return null;
-  }
+  const payload = typeof result.payload === "string" ? safeJsonParse(result.payload) : result.payload;
+  return { ok: true, payload };
+}
 
+/** Maps the users `/users/me/profile` payload (plus the newest event time) to the app-facing player summary. */
+function toPlayerSummary(
+  usersProfile: z.infer<typeof UsersMeProfileResponseSchema>["profile"],
+  lastPlayedAt: number | null,
+): PlayerSummary {
+  const totalGames = usersProfile.gamesPlayed;
   return {
-    playerId: parsed.data.profile.firebaseUid,
-    email: parsed.data.profile.email ?? undefined,
-    displayName: parsed.data.profile.displayName ?? undefined,
-    photoUrl: parsed.data.profile.photoUrl ?? undefined,
+    profile: {
+      playerId: usersProfile.firebaseUid,
+      email: usersProfile.email ?? null,
+      displayName: usersProfile.displayName ?? null,
+      photoUrl: usersProfile.photoUrl ?? null,
+      preferredLanguage: null,
+      createdAt: usersProfile.createdAt ? Date.parse(usersProfile.createdAt) : Date.now(),
+      updatedAt: usersProfile.updatedAt ? Date.parse(usersProfile.updatedAt) : Date.now(),
+    },
+    stats: {
+      totalGames,
+      wins: usersProfile.gamesWon,
+      losses: usersProfile.gamesLost,
+      draws: usersProfile.gamesDraw,
+      averageScore: totalGames > 0 ? Math.round(usersProfile.totalScore / totalGames) : 0,
+      totalScore: usersProfile.totalScore,
+      totalPlayTimeSeconds: usersProfile.totalDurationSeconds,
+      lastPlayedAt,
+    },
   };
+}
+
+/** Loads the player summary from users (read-only for existing players; users creates a missing row). */
+async function loadPlayerSummary(
+  request: FastifyRequest,
+  reply: FastifyReply,
+  config: AppConfig,
+  timeoutMs: number,
+): Promise<PlayerSummary | null> {
+  const profileCall = await callUsersService(request, reply, config, timeoutMs, "GET", "/users/me/profile");
+  if (!profileCall.ok) {
+    return null;
+  }
+
+  const parsed = UsersMeProfileResponseSchema.safeParse(profileCall.payload);
+  if (!parsed.success) {
+    reply.status(502).send({ message: "Failed to load player data", error: "Invalid users profile response" });
+    return null;
+  }
+
+  let lastPlayedAt: number | null = null;
+  if (parsed.data.profile.gamesPlayed > 0) {
+    // The profile payload carries no event timestamps; one extra read is only needed for players with history.
+    const statsCall = await callUsersService(request, reply, config, timeoutMs, "GET", "/users/me/stats", { recentLimit: 1 });
+    if (!statsCall.ok) {
+      return null;
+    }
+    const stats = UsersMeStatsResponseSchema.safeParse(statsCall.payload);
+    const newest = stats.success ? stats.data.recentEvents[0]?.playedAt : undefined;
+    lastPlayedAt = newest ? Date.parse(newest) : null;
+  }
+
+  return toPlayerSummary(parsed.data.profile, lastPlayedAt);
+}
+
+/** Best-effort stats refresh for the events response: never answers the request and never throws. */
+async function fetchPlayerStatsQuietly(
+  request: FastifyRequest,
+  config: AppConfig,
+  timeoutMs: number,
+): Promise<PlayerSummary["stats"] | null> {
+  let failed = false;
+  const silentReply = new Proxy({}, {
+    get: () => () => {
+      failed = true;
+      return silentReply;
+    },
+  }) as unknown as FastifyReply;
+
+  try {
+    const summary = await loadPlayerSummary(request, silentReply, config, timeoutMs);
+    return failed || !summary ? null : summary.stats;
+  } catch {
+    return null;
+  }
 }
 
 async function fetchCatalog(
@@ -303,26 +428,26 @@ async function buildGeneratedGameFromInventory(
 export async function mobileRoutes(app: FastifyInstance, config: AppConfig): Promise<void> {
   const upstreamTimeoutMs = config.UPSTREAM_TIMEOUT_MS ?? 15000;
   const upstreamGenerationTimeoutMs = config.UPSTREAM_GENERATION_TIMEOUT_MS ?? 60000;
-  const playerStore = new PlayerStore(config.PLAYER_DB_FILE ?? ":memory:");
   const rateLimitMax = config.RATE_LIMIT_MAX ?? DEFAULT_RATE_LIMIT_MAX;
   if (rateLimitMax > 0) {
     await app.register(rateLimit, rateLimitOptions(rateLimitMax, config.RATE_LIMIT_WINDOW_MS ?? DEFAULT_RATE_LIMIT_WINDOW_MS));
   }
 
   app.get("/v1/mobile/player/profile", async (request, reply) => {
-    const identity = await resolveAuthenticatedPlayerIdentity(request, reply, config, upstreamTimeoutMs);
-    if (!identity) {
-      return;
+    if (!hasMobileAuthContext(request.headers as Record<string, unknown>)) {
+      return reply.status(401).send({ message: "Unauthorized" });
     }
 
-    const summary = await playerStore.getPlayerSummary(identity);
+    const summary = await loadPlayerSummary(request, reply, config, upstreamTimeoutMs);
+    if (!summary) {
+      return;
+    }
     return reply.send(summary);
   });
 
   app.put("/v1/mobile/player/profile", async (request, reply) => {
-    const identity = await resolveAuthenticatedPlayerIdentity(request, reply, config, upstreamTimeoutMs);
-    if (!identity) {
-      return;
+    if (!hasMobileAuthContext(request.headers as Record<string, unknown>)) {
+      return reply.status(401).send({ message: "Unauthorized" });
     }
 
     const parsedPayload = PlayerProfileUpdateSchema.safeParse(request.body ?? {});
@@ -330,21 +455,22 @@ export async function mobileRoutes(app: FastifyInstance, config: AppConfig): Pro
       return sendValidationError(reply, parsedPayload.error);
     }
 
-    const profile = await playerStore.upsertPlayer(identity.playerId, {
-      email: parsedPayload.data.email ?? identity.email,
-      displayName: parsedPayload.data.displayName ?? identity.displayName,
-      photoUrl: parsedPayload.data.photoUrl ?? identity.photoUrl,
-      preferredLanguage: parsedPayload.data.preferredLanguage,
-    });
+    // users syncs the profile from the verified token claims and creates the row on first login.
+    const session = await callUsersService(request, reply, config, upstreamTimeoutMs, "POST", "/users/firebase/session", {}, {});
+    if (!session.ok) {
+      return;
+    }
 
-    const stats = (await playerStore.getPlayerSummary(identity)).stats;
-    return reply.send({ profile, stats });
+    const summary = await loadPlayerSummary(request, reply, config, upstreamTimeoutMs);
+    if (!summary) {
+      return;
+    }
+    return reply.send(summary);
   });
 
   app.post("/v1/mobile/games/events", async (request, reply) => {
-    const identity = await resolveAuthenticatedPlayerIdentity(request, reply, config, upstreamTimeoutMs);
-    if (!identity) {
-      return;
+    if (!hasMobileAuthContext(request.headers as Record<string, unknown>)) {
+      return reply.status(401).send({ message: "Unauthorized" });
     }
 
     const parsedPayload = GameEventsSyncSchema.safeParse(request.body ?? {});
@@ -352,12 +478,27 @@ export async function mobileRoutes(app: FastifyInstance, config: AppConfig): Pro
       return sendValidationError(reply, parsedPayload.error);
     }
 
-    const result = await playerStore.saveGameEvents(identity.playerId, parsedPayload.data.events);
-    return reply.send({
-      synced: result.synced,
-      message: `Synced ${result.synced} game event(s)`,
-      stats: result.stats,
-    });
+    // The profile row is created by PUT/GET profile; users stores the events idempotently.
+    const stored = await callUsersService(
+      request, reply, config, upstreamTimeoutMs, "POST", "/users/me/games/events/batch", {}, parsedPayload.data,
+    );
+    if (!stored.ok) {
+      return;
+    }
+
+    const synced = (stored.payload as { synced?: unknown } | undefined)?.synced;
+    const syncedCount = typeof synced === "number" ? synced : 0;
+    const body: Record<string, unknown> = {
+      synced: syncedCount,
+      message: `Synced ${syncedCount} game event(s)`,
+    };
+
+    // Best effort: keep returning the refreshed stats; the app itself only reads `synced` and `message`.
+    const stats = await fetchPlayerStatsQuietly(request, config, upstreamTimeoutMs);
+    if (stats) {
+      body.stats = stats;
+    }
+    return reply.send(body);
   });
 
   app.get("/v1/mobile/games/categories", async (request, reply) => {

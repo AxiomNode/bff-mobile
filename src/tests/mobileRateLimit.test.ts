@@ -12,7 +12,6 @@ const BASE_CONFIG = {
   QUIZZ_SERVICE_URL: "http://microservice-quizz:7100",
   WORDPASS_SERVICE_URL: "http://microservice-wordpass:7101",
   USERS_SERVICE_URL: "http://microservice-users:7102",
-  PLAYER_DB_FILE: ":memory:",
 };
 
 const ROUTES: Array<{ method: "GET" | "PUT" | "POST"; url: string }> = [
@@ -92,7 +91,6 @@ describe("buildServer trust proxy wiring", () => {
       QUIZZ_SERVICE_URL: "http://microservice-quizz:7100",
       WORDPASS_SERVICE_URL: "http://microservice-wordpass:7101",
       USERS_SERVICE_URL: "http://microservice-users:7102",
-      PLAYER_DB_FILE: ":memory:",
       RATE_LIMIT_MAX: "1",
       ...overrides,
     };

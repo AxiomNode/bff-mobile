@@ -1,11 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
-import os from "node:os";
-import path from "node:path";
 
 import Fastify from "fastify";
 import { mobileRoutes } from "../app/routes/mobile.js";
-import { PlayerStore } from "../app/services/playerStore.js";
 
 describe("mobile routes", () => {
   it("returns merged categories from quiz and wordpass catalogs", async () => {
@@ -80,36 +76,26 @@ describe("mobile routes", () => {
     await app.close();
   });
 
-  it("upserts and retrieves player profile from mobile endpoint", async () => {
+  it("upserts and retrieves player profile through microservice-users", async () => {
     const app = Fastify();
+    const usersProfile = {
+      profile: {
+        firebaseUid: "player-123",
+        email: "player@axiomnode.es",
+        displayName: "Player One",
+        photoUrl: "https://cdn.example.com/player-one.png",
+        gamesPlayed: 0,
+        createdAt: "2026-03-20T10:00:00.000Z",
+        updatedAt: "2026-03-21T10:00:00.000Z",
+      },
+    };
+    const json = (body: unknown, status = 200) =>
+      new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
     const fetchMock = vi
       .fn()
-      .mockResolvedValueOnce(
-        new Response(JSON.stringify({
-          profile: {
-            firebaseUid: "player-123",
-            email: "player@axiomnode.es",
-            displayName: "Player One",
-            photoUrl: "https://cdn.example.com/player-one.png",
-          },
-        }), {
-          status: 200,
-          headers: { "content-type": "application/json" },
-        }),
-      )
-      .mockResolvedValueOnce(
-        new Response(JSON.stringify({
-          profile: {
-            firebaseUid: "player-123",
-            email: "player@axiomnode.es",
-            displayName: "Player One",
-            photoUrl: "https://cdn.example.com/player-one.png",
-          },
-        }), {
-          status: 200,
-          headers: { "content-type": "application/json" },
-        }),
-      );
+      .mockResolvedValueOnce(json({ message: "User created", firebaseUid: "player-123" }, 201))
+      .mockResolvedValueOnce(json(usersProfile))
+      .mockResolvedValueOnce(json(usersProfile));
     vi.stubGlobal("fetch", fetchMock);
 
     await mobileRoutes(app, {
@@ -123,83 +109,71 @@ describe("mobile routes", () => {
     const upsertResponse = await app.inject({
       method: "PUT",
       url: "/v1/mobile/player/profile",
-      headers: {
-        authorization: "Bearer verified-user-token",
-      },
-      payload: {
-        preferredLanguage: "es",
-      },
+      headers: { authorization: "Bearer verified-user-token" },
+      payload: { preferredLanguage: "es" },
     });
-
     const getResponse = await app.inject({
       method: "GET",
       url: "/v1/mobile/player/profile",
-      headers: {
-        authorization: "Bearer verified-user-token",
-      },
+      headers: { authorization: "Bearer verified-user-token" },
     });
 
     expect(upsertResponse.statusCode).toBe(200);
-    expect(upsertResponse.json()).toMatchObject({
+    expect(upsertResponse.json()).toEqual({
       profile: {
         playerId: "player-123",
         email: "player@axiomnode.es",
         displayName: "Player One",
         photoUrl: "https://cdn.example.com/player-one.png",
-        preferredLanguage: "es",
+        preferredLanguage: null,
+        createdAt: Date.parse("2026-03-20T10:00:00.000Z"),
+        updatedAt: Date.parse("2026-03-21T10:00:00.000Z"),
       },
       stats: {
         totalGames: 0,
+        wins: 0,
+        losses: 0,
+        draws: 0,
+        averageScore: 0,
+        totalScore: 0,
+        totalPlayTimeSeconds: 0,
+        lastPlayedAt: null,
       },
     });
     expect(getResponse.statusCode).toBe(200);
-    expect(getResponse.json()).toMatchObject({
-      profile: {
-        playerId: "player-123",
-        email: "player@axiomnode.es",
-      },
-      stats: {
-        totalGames: 0,
-      },
-    });
+    expect(getResponse.json()).toMatchObject({ profile: { playerId: "player-123" }, stats: { totalGames: 0 } });
 
-    expect(fetchMock).toHaveBeenCalledTimes(2);
-    expect(fetchMock.mock.calls[0]?.[0]).toBe("http://localhost:7102/users/me/profile");
+    expect(fetchMock.mock.calls.map((call) => [call[0], (call[1] as { method: string }).method])).toEqual([
+      ["http://localhost:7102/users/firebase/session", "POST"],
+      ["http://localhost:7102/users/me/profile", "GET"],
+      ["http://localhost:7102/users/me/profile", "GET"],
+    ]);
 
     vi.unstubAllGlobals();
     await app.close();
   });
 
-  it("syncs mobile game events and returns aggregated player stats", async () => {
+  it("maps users stats to the player summary and reads the newest event time", async () => {
     const app = Fastify();
+    const json = (body: unknown) =>
+      new Response(JSON.stringify(body), { status: 200, headers: { "content-type": "application/json" } });
     const fetchMock = vi
       .fn()
-      .mockResolvedValueOnce(
-        new Response(JSON.stringify({
-          profile: {
-            firebaseUid: "player-222",
-            email: "player2@axiomnode.es",
-            displayName: "Player Two",
-            photoUrl: null,
-          },
-        }), {
-          status: 200,
-          headers: { "content-type": "application/json" },
-        }),
-      )
-      .mockResolvedValueOnce(
-        new Response(JSON.stringify({
-          profile: {
-            firebaseUid: "player-222",
-            email: "player2@axiomnode.es",
-            displayName: "Player Two",
-            photoUrl: null,
-          },
-        }), {
-          status: 200,
-          headers: { "content-type": "application/json" },
-        }),
-      );
+      .mockResolvedValueOnce(json({
+        profile: {
+          firebaseUid: "player-9",
+          email: null,
+          displayName: null,
+          photoUrl: null,
+          gamesPlayed: 3,
+          gamesWon: 2,
+          gamesLost: 1,
+          gamesDraw: 0,
+          totalScore: 200,
+          totalDurationSeconds: 150,
+        },
+      }))
+      .mockResolvedValueOnce(json({ recentEvents: [{ playedAt: "2026-03-22T09:50:00.000Z" }] }));
     vi.stubGlobal("fetch", fetchMock);
 
     await mobileRoutes(app, {
@@ -210,69 +184,206 @@ describe("mobile routes", () => {
       WORDPASS_SERVICE_URL: "http://microservice-wordpass:7101",
     });
 
+    const response = await app.inject({
+      method: "GET",
+      url: "/v1/mobile/player/profile",
+      headers: { authorization: "Bearer t" },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({
+      profile: { playerId: "player-9", email: null, displayName: null, photoUrl: null, preferredLanguage: null },
+      stats: {
+        totalGames: 3,
+        wins: 2,
+        losses: 1,
+        draws: 0,
+        averageScore: 67,
+        totalScore: 200,
+        totalPlayTimeSeconds: 150,
+        lastPlayedAt: Date.parse("2026-03-22T09:50:00.000Z"),
+      },
+    });
+    expect(fetchMock.mock.calls[1]?.[0]).toBe("http://localhost:7102/users/me/stats?recentLimit=1");
+
+    vi.unstubAllGlobals();
+    await app.close();
+  });
+
+  it("syncs mobile game events to microservice-users and returns refreshed stats", async () => {
+    const app = Fastify();
+    const json = (body: unknown) =>
+      new Response(JSON.stringify(body), { status: 200, headers: { "content-type": "application/json" } });
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(json({ synced: 2, duplicates: 0, message: "Synced 2 game event(s)" }))
+      .mockResolvedValueOnce(json({
+        profile: { firebaseUid: "player-222", gamesPlayed: 0 },
+      }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await mobileRoutes(app, {
+      SERVICE_NAME: "bff-mobile",
+      SERVICE_PORT: 7010,
+      ALLOWED_ORIGINS: "http://localhost:3000",
+      QUIZZ_SERVICE_URL: "http://microservice-quizz:7100",
+      WORDPASS_SERVICE_URL: "http://microservice-wordpass:7101",
+    });
+
+    const events = [
+      {
+        gameId: "game-1",
+        gameType: "quiz",
+        categoryId: "ciencia",
+        categoryName: "Ciencia",
+        language: "es",
+        outcome: "WON",
+        score: 90,
+        durationSeconds: 120,
+        timestamp: 1_710_000_000_000,
+      },
+      {
+        gameId: "game-2",
+        gameType: "wordpass",
+        categoryId: "historia",
+        categoryName: "Historia",
+        language: "es",
+        outcome: "lost",
+        score: 30,
+        durationSeconds: 75,
+        timestamp: 1_710_000_050_000,
+      },
+    ];
+
     const syncResponse = await app.inject({
       method: "POST",
       url: "/v1/mobile/games/events",
-      headers: {
-        authorization: "Bearer verified-user-token",
-      },
-      payload: {
-        events: [
-          {
-            gameId: "game-1",
-            gameType: "quiz",
-            categoryId: "ciencia",
-            categoryName: "Ciencia",
-            language: "es",
-            outcome: "WON",
-            score: 90,
-            durationSeconds: 120,
-            timestamp: 1_710_000_000_000,
-          },
-          {
-            gameId: "game-2",
-            gameType: "wordpass",
-            categoryId: "historia",
-            categoryName: "Historia",
-            language: "es",
-            outcome: "LOST",
-            score: 30,
-            durationSeconds: 75,
-            timestamp: 1_710_000_050_000,
-          },
-        ],
-      },
-    });
-
-    const summaryResponse = await app.inject({
-      method: "GET",
-      url: "/v1/mobile/player/profile",
-      headers: {
-        authorization: "Bearer verified-user-token",
-      },
+      headers: { authorization: "Bearer verified-user-token" },
+      payload: { events },
     });
 
     expect(syncResponse.statusCode).toBe(200);
     expect(syncResponse.json()).toMatchObject({
       synced: 2,
-      stats: {
-        totalGames: 2,
-        wins: 1,
-        losses: 1,
-        draws: 0,
-        averageScore: 60,
-        totalPlayTimeSeconds: 195,
-      },
+      message: "Synced 2 game event(s)",
+      stats: { totalGames: 0 },
     });
-    expect(summaryResponse.statusCode).toBe(200);
-    expect(summaryResponse.json()).toMatchObject({
-      stats: {
-        totalGames: 2,
-      },
+
+    const [url, init] = fetchMock.mock.calls[0] as [string, { method: string; body: string; headers: Record<string, string> }];
+    expect(url).toBe("http://localhost:7102/users/me/games/events/batch");
+    expect(init.method).toBe("POST");
+    expect(init.headers.authorization).toBe("Bearer verified-user-token");
+    expect(JSON.parse(init.body)).toEqual({
+      events: [
+        { ...events[0], outcome: "won" },
+        { ...events[1], outcome: "lost" },
+      ],
     });
 
     vi.unstubAllGlobals();
+    await app.close();
+  });
 
+  it("returns synced events without stats when the stats refresh fails", async () => {
+    const app = Fastify();
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ synced: 1 }), { status: 200, headers: { "content-type": "application/json" } }))
+      .mockRejectedValueOnce(new Error("users down"));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await mobileRoutes(app, {
+      SERVICE_NAME: "bff-mobile",
+      SERVICE_PORT: 7010,
+      ALLOWED_ORIGINS: "http://localhost:3000",
+      QUIZZ_SERVICE_URL: "http://microservice-quizz:7100",
+      WORDPASS_SERVICE_URL: "http://microservice-wordpass:7101",
+    });
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/v1/mobile/games/events",
+      headers: { authorization: "Bearer t" },
+      payload: {
+        events: [{
+          gameId: "g",
+          gameType: "quiz",
+          categoryId: "c",
+          categoryName: "C",
+          language: "es",
+          outcome: "DRAW",
+          score: 0,
+          durationSeconds: 1,
+          timestamp: 1_710_000_000_000,
+        }],
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toEqual({ synced: 1, message: "Synced 1 game event(s)" });
+
+    vi.unstubAllGlobals();
+    await app.close();
+  });
+
+  it("relays users validation and read-only-role errors for game events", async () => {
+    const app = Fastify();
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ message: "Read-only roles cannot modify data." }), {
+        status: 403,
+        headers: { "content-type": "application/json" },
+      }))
+      .mockResolvedValueOnce(new Response("bad gateway", { status: 502 }))
+      .mockResolvedValueOnce(new Response("", { status: 200, headers: { "content-type": "text/plain" } }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await mobileRoutes(app, {
+      SERVICE_NAME: "bff-mobile",
+      SERVICE_PORT: 7010,
+      ALLOWED_ORIGINS: "http://localhost:3000",
+      QUIZZ_SERVICE_URL: "http://microservice-quizz:7100",
+      WORDPASS_SERVICE_URL: "http://microservice-wordpass:7101",
+    });
+
+    const payload = {
+      events: [{
+        gameId: "g",
+        gameType: "quiz",
+        categoryId: "c",
+        categoryName: "C",
+        language: "es",
+        outcome: "WON",
+        score: 1,
+        durationSeconds: 1,
+        timestamp: 1_710_000_000_000,
+      }],
+    };
+    const post = () => app.inject({
+      method: "POST",
+      url: "/v1/mobile/games/events",
+      headers: { authorization: "Bearer t" },
+      payload,
+    });
+
+    const forbidden = await post();
+    const upstreamFailure = await post();
+    const emptyBody = await post();
+    const unknownOutcome = await app.inject({
+      method: "POST",
+      url: "/v1/mobile/games/events",
+      headers: { authorization: "Bearer t" },
+      payload: { events: [{ ...payload.events[0], outcome: "ABANDONED" }] },
+    });
+
+    expect(forbidden.statusCode).toBe(403);
+    expect(forbidden.json()).toMatchObject({ message: "Read-only roles cannot modify data." });
+    expect(upstreamFailure.statusCode).toBe(502);
+    expect(emptyBody.json()).toMatchObject({ synced: 0 });
+    expect(unknownOutcome.statusCode).toBe(400);
+    expect(fetchMock).toHaveBeenCalledTimes(4);
+
+    vi.unstubAllGlobals();
     await app.close();
   });
 
@@ -314,7 +425,7 @@ describe("mobile routes", () => {
 
     const fetchMock = vi
       .fn()
-      .mockResolvedValueOnce(new Response("forbidden", { status: 403 }))
+      .mockResolvedValueOnce(new Response("unauthorized", { status: 401 }))
       .mockResolvedValueOnce(new Response("users down", { status: 503 }))
       .mockResolvedValueOnce(new Response(JSON.stringify({ profile: { firebaseUid: "" } }), {
         status: 200,
@@ -329,7 +440,6 @@ describe("mobile routes", () => {
       ALLOWED_ORIGINS: "http://localhost:3000",
       QUIZZ_SERVICE_URL: "http://microservice-quizz:7100",
       WORDPASS_SERVICE_URL: "http://microservice-wordpass:7101",
-      PLAYER_DB_FILE: ":memory:",
     });
 
     const unauthorized = await app.inject({
@@ -382,7 +492,6 @@ describe("mobile routes", () => {
       ALLOWED_ORIGINS: "http://localhost:3000",
       QUIZZ_SERVICE_URL: "http://microservice-quizz:7100",
       WORDPASS_SERVICE_URL: "http://microservice-wordpass:7101",
-      PLAYER_DB_FILE: ":memory:",
     });
 
     const response = await app.inject({
@@ -432,7 +541,6 @@ describe("mobile routes", () => {
       ALLOWED_ORIGINS: "http://localhost:3000",
       QUIZZ_SERVICE_URL: "http://microservice-quizz:7100",
       WORDPASS_SERVICE_URL: "http://microservice-wordpass:7101",
-      PLAYER_DB_FILE: ":memory:",
     });
 
     const profileResponse = await app.inject({
@@ -1281,92 +1389,5 @@ describe("mobile routes", () => {
 
     vi.unstubAllGlobals();
     await app.close();
-  });
-
-  it("persists player summaries and ignores duplicate game events", async () => {
-    const tempDir = await mkdtemp(path.join(os.tmpdir(), "axiomnode-player-store-"));
-    const dbFile = path.join(tempDir, "players.json");
-
-    try {
-      const store = new PlayerStore(dbFile);
-
-      await store.upsertPlayer("player-store-1", {
-        email: "player-store@axiomnode.es",
-        displayName: "Store Player",
-        photoUrl: "https://cdn.example.com/store-player.png",
-        preferredLanguage: "en",
-      });
-      await store.upsertPlayer("player-store-1", {});
-
-      const event = {
-        gameId: "game-duplicate",
-        gameType: "quiz",
-        categoryId: "science",
-        categoryName: "Science",
-        language: "en",
-        outcome: "DRAW",
-        score: 42,
-        durationSeconds: 30,
-        timestamp: 1_710_000_100_000,
-      };
-
-      const firstSync = await store.saveGameEvents("player-store-1", [event]);
-      const duplicateSync = await store.saveGameEvents("player-store-1", [event]);
-
-      expect(firstSync).toMatchObject({ synced: 1, stats: { totalGames: 1, draws: 1 } });
-      expect(duplicateSync).toMatchObject({ synced: 0, stats: { totalGames: 1, draws: 1 } });
-
-      const reloaded = new PlayerStore(dbFile);
-      await expect(reloaded.getPlayerSummary({ playerId: "player-store-1" })).resolves.toMatchObject({
-        profile: {
-          email: "player-store@axiomnode.es",
-          displayName: "Store Player",
-          photoUrl: "https://cdn.example.com/store-player.png",
-          preferredLanguage: "en",
-        },
-        stats: {
-          totalGames: 1,
-          draws: 1,
-          totalScore: 42,
-        },
-      });
-
-      const persisted = JSON.parse(await readFile(dbFile, "utf-8"));
-      expect(persisted.events).toHaveLength(1);
-    } finally {
-      await rm(tempDir, { recursive: true, force: true });
-    }
-  });
-
-  it("rejects malformed persisted player store files", async () => {
-    const tempDir = await mkdtemp(path.join(os.tmpdir(), "axiomnode-player-store-broken-"));
-    const dbFile = path.join(tempDir, "players.json");
-
-    try {
-      await writeFile(dbFile, "not-json", "utf-8");
-      const store = new PlayerStore(dbFile);
-
-      await expect(store.getPlayerSummary({ playerId: "broken-player" })).rejects.toBeInstanceOf(SyntaxError);
-    } finally {
-      await rm(tempDir, { recursive: true, force: true });
-    }
-  });
-
-  it("creates anonymous player summaries with null optional profile fields", async () => {
-    const store = new PlayerStore(":memory:");
-
-    await expect(store.getPlayerSummary({ playerId: "anonymous-player" })).resolves.toMatchObject({
-      profile: {
-        playerId: "anonymous-player",
-        email: null,
-        displayName: null,
-        photoUrl: null,
-        preferredLanguage: null,
-      },
-      stats: {
-        totalGames: 0,
-        lastPlayedAt: null,
-      },
-    });
   });
 });
