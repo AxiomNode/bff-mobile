@@ -15,7 +15,7 @@ Mobile BFF that serves mobile-optimized game APIs and orchestration.
 
 ## CI/CD notes
 - Push to main dispatches platform-infra build-push with service=bff-mobile.
-- Platform-infra deploy workflow applies rollout to dev.
+- Deployment is manual-only via the platform-infra `deploy.yaml` workflow (the k3s staging host no longer exists, nothing auto-deploys).
 
 ## LLM editing rules
 - Keep mobile payloads lean and stable.
