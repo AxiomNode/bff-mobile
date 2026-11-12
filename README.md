@@ -88,7 +88,7 @@ Indirect runtime dependencies reached through those services:
 
 ### CI/CD and rollout note
 
-CI, image publication, and staging rollout behavior are documented in `docs/operations/README.md` and `../docs/operations/cicd-workflow-map.md`.
+CI and image publication are documented in `docs/operations/README.md` and `../docs/operations/cicd-workflow-map.md`.
 
 ### Internal dependencies
 
@@ -113,7 +113,7 @@ CI, image publication, and staging rollout behavior are documented in `docs/oper
 
 ### Operational notes
 
-- This service is part of the covered automatic staging deployment chain.
+- This service used to be part of the automatic staging deployment chain; that chain is disabled (the k3s host no longer exists and `platform-infra` `deploy.yaml` is manual-only).
 - Validation failure prevents image publication for the triggering push.
 - Docs-only pushes should not trigger central image publication anymore.
 
