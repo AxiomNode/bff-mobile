@@ -5,6 +5,8 @@ import { z } from "zod";
 
 import type { AppConfig } from "../config.js";
 import { PlayerStore, type PlayerIdentity } from "../services/playerStore.js";
+import rateLimit from "@fastify/rate-limit";
+import { DEFAULT_RATE_LIMIT_MAX, DEFAULT_RATE_LIMIT_WINDOW_MS, rateLimitOptions } from "../plugins/rateLimit.js";
 
 /** @module mobile — Routes for mobile game endpoints (quiz & wordpass random and generate). */
 
@@ -302,6 +304,10 @@ export async function mobileRoutes(app: FastifyInstance, config: AppConfig): Pro
   const upstreamTimeoutMs = config.UPSTREAM_TIMEOUT_MS ?? 15000;
   const upstreamGenerationTimeoutMs = config.UPSTREAM_GENERATION_TIMEOUT_MS ?? 60000;
   const playerStore = new PlayerStore(config.PLAYER_DB_FILE ?? ":memory:");
+  const rateLimitMax = config.RATE_LIMIT_MAX ?? DEFAULT_RATE_LIMIT_MAX;
+  if (rateLimitMax > 0) {
+    await app.register(rateLimit, rateLimitOptions(rateLimitMax, config.RATE_LIMIT_WINDOW_MS ?? DEFAULT_RATE_LIMIT_WINDOW_MS));
+  }
 
   app.get("/v1/mobile/player/profile", async (request, reply) => {
     const identity = await resolveAuthenticatedPlayerIdentity(request, reply, config, upstreamTimeoutMs);

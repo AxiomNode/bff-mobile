@@ -14,6 +14,7 @@
   "dependencies": {
     "@axiomnode/shared-sdk-client": "file:../../shared-sdk-client/typescript",
     "@fastify/cors": "^10.1.0",
+    "@fastify/rate-limit": "^10.3.0",
     "dotenv": "^16.4.5",
     "fastify": "^5.0.0",
     "zod": "^4.6.7"
