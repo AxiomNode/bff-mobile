@@ -10,7 +10,7 @@ Backend-for-Frontend service for AxiomNode mobile clients.
 
 `bff-mobile` is the mobile channel facade. It provides mobile-shaped contracts while insulating the app from domain-service topology and internal contract churn.
 
-Current platform status: mobile traffic enters through `api-gateway`, then flows through this BFF into `microservice-users`, `microservice-quizz`, and `microservice-wordpass`. Runtime AI generation remains behind the domain services, not exposed directly to mobile clients.
+Current platform status: mobile traffic enters through `api-gateway`, then flows through this BFF into `microservice-users`, `microservice-quizz`, and `microservice-wordpass` (the last two are the same `microservice-games` code base run once per game). Runtime AI generation remains behind the domain services, not exposed directly to mobile clients.
 
 ## Runtime role
 
@@ -82,6 +82,8 @@ Primary downstream dependencies:
 
 - `microservice-quizz`
 - `microservice-wordpass`
+
+Both game services are Deployments of one code base and image (`microservice-games`, formerly `microservice-quizz`): `microservice-quizz` runs it with `GAME_TYPE=quiz` and `microservice-wordpass` with `GAME_TYPE=word-pass`. Their Service names, ports and the variables below did not change; the BFF still addresses each game by host, never by a path prefix.
 
 Indirect runtime dependencies reached through those services:
 

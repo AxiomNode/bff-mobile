@@ -34,6 +34,8 @@ Primary direct dependencies:
 - `microservice-quizz`
 - `microservice-wordpass`
 
+Both game services are Deployments of one code base and image (`microservice-games`, formerly `microservice-quizz`): `microservice-quizz` runs it with `GAME_TYPE=quiz` and `microservice-wordpass` with `GAME_TYPE=word-pass`. Their Service names, ports and the variables below did not change; the BFF still addresses each game by host, never by a path prefix.
+
 Indirect dependencies reached through those services:
 
 - `ai-engine-api`
